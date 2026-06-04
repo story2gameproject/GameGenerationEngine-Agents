@@ -1,0 +1,7 @@
+flask>=3.0.0
+flask-cors>=4.0.0
+python-dotenv>=1.0.1
+anthropic>=0.40.0
+huggingface-hub>=0.24.7
+Pillow>=10.4.0
+rembg[cpu]>=2.0.50

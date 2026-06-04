@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Storybased Game Maker — generate a custom platform game through conversation">
+  <title>Storybased Game Maker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <a class="skip-link" href="#messageInput">Skip to input</a>
+
+  <div class="app">
+
+    <!-- ═════════════════ SIDEBAR ═════════════════ -->
+    <aside class="sidebar" aria-label="App navigation">
+      <div class="logo" title="GameMaker">
+        <svg viewBox="0 0 16 12" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="0" y="3"  width="16" height="6" fill="#1A1A1A"/>
+          <rect x="1" y="2"  width="14" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="9"  width="14" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="3"  width="14" height="6" fill="#FFF4D6"/>
+          <rect x="2" y="5" width="3" height="1" fill="#1A1A1A"/>
+          <rect x="3" y="4" width="1" height="3" fill="#1A1A1A"/>
+          <rect x="10" y="4" width="2" height="2" fill="#F97316"/>
+          <rect x="12" y="6" width="2" height="2" fill="#2563EB"/>
+        </svg>
+      </div>
+      <button class="icon-btn" id="clearBtn"  type="button" aria-label="Restart conversation" title="Restart">🔄</button>
+      <button class="icon-btn" id="aboutBtn"  type="button" aria-label="About"                title="About">ℹ️</button>
+      <button class="icon-btn" id="playBtn"   type="button" aria-label="Play"                 title="Play">🎮</button>
+      <button class="icon-btn" id="exportBtn" type="button" aria-label="Export game"          title="Export">📤</button>
+    </aside>
+
+    <!-- ═════════════════ TOP BAR ═════════════════ -->
+    <header class="topbar">
+      <div class="topbar__title">STORYBASED GAME MAKER</div>
+      <div class="topbar__status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>ONLINE</span>
+      </div>
+    </header>
+
+    <!-- ═════════════════ MAIN ═════════════════ -->
+    <main class="main">
+
+      <!-- Decoration: tree (left, on the floor) -->
+      <div class="decor decor--tree" aria-hidden="true">
+        <svg viewBox="0 0 16 18" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+          <!-- canopy yellow fill -->
+          <rect x="3" y="1"  width="10" height="1" fill="#FFD23F"/>
+          <rect x="2" y="2"  width="12" height="1" fill="#FFD23F"/>
+          <rect x="1" y="3"  width="14" height="6" fill="#FFD23F"/>
+          <rect x="2" y="9"  width="12" height="1" fill="#FFD23F"/>
+          <rect x="3" y="10" width="3"  height="1" fill="#FFD23F"/>
+          <rect x="10" y="10" width="3" height="1" fill="#FFD23F"/>
+          <!-- darker yellow texture -->
+          <rect x="5" y="3"  width="2" height="1" fill="#D9A800"/>
+          <rect x="9" y="5"  width="2" height="1" fill="#D9A800"/>
+          <rect x="3" y="7"  width="2" height="1" fill="#D9A800"/>
+          <rect x="11" y="6" width="1" height="1" fill="#D9A800"/>
+          <!-- canopy outline -->
+          <rect x="3" y="0"  width="10" height="1" fill="#1A1A1A"/>
+          <rect x="2" y="1"  width="1" height="1" fill="#1A1A1A"/>
+          <rect x="13" y="1" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="2"  width="1" height="1" fill="#1A1A1A"/>
+          <rect x="14" y="2" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="3"  width="1" height="6" fill="#1A1A1A"/>
+          <rect x="15" y="3" width="1" height="6" fill="#1A1A1A"/>
+          <rect x="1" y="9"  width="1" height="1" fill="#1A1A1A"/>
+          <rect x="14" y="9" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="2" y="10" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="13" y="10" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="6" y="10" width="4" height="1" fill="#1A1A1A"/>
+          <!-- trunk -->
+          <rect x="6" y="11" width="4" height="6" fill="#C2741A"/>
+          <rect x="5" y="11" width="1" height="6" fill="#1A1A1A"/>
+          <rect x="10" y="11" width="1" height="6" fill="#1A1A1A"/>
+          <rect x="6" y="17" width="4" height="1" fill="#1A1A1A"/>
+        </svg>
+      </div>
+
+      <!-- Decoration: three hearts stacked (right, top) -->
+      <div class="decor decor--hearts" aria-hidden="true">
+        <svg viewBox="0 0 8 7" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="0" width="2" height="1" fill="#1A1A1A"/><rect x="5" y="0" width="2" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="1" width="1" height="1" fill="#1A1A1A"/><rect x="3" y="1" width="2" height="1" fill="#1A1A1A"/><rect x="7" y="1" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="2" width="1" height="1" fill="#1A1A1A"/><rect x="7" y="2" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="3" width="1" height="1" fill="#1A1A1A"/><rect x="6" y="3" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="2" y="4" width="1" height="1" fill="#1A1A1A"/><rect x="5" y="4" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="3" y="5" width="2" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="1" width="2" height="1" fill="#FFD23F"/><rect x="5" y="1" width="2" height="1" fill="#FFD23F"/>
+          <rect x="1" y="2" width="6" height="1" fill="#FFD23F"/>
+          <rect x="2" y="3" width="4" height="1" fill="#FFD23F"/>
+          <rect x="3" y="4" width="2" height="1" fill="#FFD23F"/>
+          <rect x="2" y="2" width="1" height="1" fill="#FFFFFF"/>
+        </svg>
+        <svg viewBox="0 0 8 7" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="0" width="2" height="1" fill="#1A1A1A"/><rect x="5" y="0" width="2" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="1" width="1" height="1" fill="#1A1A1A"/><rect x="3" y="1" width="2" height="1" fill="#1A1A1A"/><rect x="7" y="1" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="2" width="1" height="1" fill="#1A1A1A"/><rect x="7" y="2" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="3" width="1" height="1" fill="#1A1A1A"/><rect x="6" y="3" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="2" y="4" width="1" height="1" fill="#1A1A1A"/><rect x="5" y="4" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="3" y="5" width="2" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="1" width="2" height="1" fill="#FFD23F"/><rect x="5" y="1" width="2" height="1" fill="#FFD23F"/>
+          <rect x="1" y="2" width="6" height="1" fill="#FFD23F"/>
+          <rect x="2" y="3" width="4" height="1" fill="#FFD23F"/>
+          <rect x="3" y="4" width="2" height="1" fill="#FFD23F"/>
+          <rect x="2" y="2" width="1" height="1" fill="#FFFFFF"/>
+        </svg>
+        <svg viewBox="0 0 8 7" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="0" width="2" height="1" fill="#1A1A1A"/><rect x="5" y="0" width="2" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="1" width="1" height="1" fill="#1A1A1A"/><rect x="3" y="1" width="2" height="1" fill="#1A1A1A"/><rect x="7" y="1" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="0" y="2" width="1" height="1" fill="#1A1A1A"/><rect x="7" y="2" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="3" width="1" height="1" fill="#1A1A1A"/><rect x="6" y="3" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="2" y="4" width="1" height="1" fill="#1A1A1A"/><rect x="5" y="4" width="1" height="1" fill="#1A1A1A"/>
+          <rect x="3" y="5" width="2" height="1" fill="#1A1A1A"/>
+          <rect x="1" y="1" width="2" height="1" fill="#FFD23F"/><rect x="5" y="1" width="2" height="1" fill="#FFD23F"/>
+          <rect x="1" y="2" width="6" height="1" fill="#FFD23F"/>
+          <rect x="2" y="3" width="4" height="1" fill="#FFD23F"/>
+          <rect x="3" y="4" width="2" height="1" fill="#FFD23F"/>
+          <rect x="2" y="2" width="1" height="1" fill="#FFFFFF"/>
+        </svg>
+      </div>
+
+      <!-- Chat area -->
+      <div class="chat-wrap">
+        <div
+          id="chat-messages"
+          class="chat-col"
+          role="log"
+          aria-label="Conversation"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-atomic="false"
+        >
+          <!-- Messages injected by JS — including the bot's first greeting -->
+        </div>
+      </div>
+
+      <div id="sr-announcer" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+
+      <!-- Input bar -->
+      <div class="input-bar">
+        <form class="input-row" id="messageForm" novalidate>
+          <label for="messageInput" class="sr-only">Your message</label>
+          <textarea
+            id="messageInput"
+            class="message-input"
+            placeholder="Type your answer…"
+            rows="1"
+            aria-describedby="input-hint"
+            autofocus
+          ></textarea>
+          <p id="input-hint" class="sr-only">Press Enter to send. Shift+Enter for a new line.</p>
+          <button class="send-btn" id="sendBtn" type="submit" aria-label="Send message">SEND ▶</button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <!-- Dialogs -->
+  <dialog class="modal" id="about-dialog" aria-labelledby="about-heading">
+    <article class="modal__content">
+      <h2 id="about-heading" class="modal__title">About</h2>
+      <p>A storybased platform-game generator — chat with the bot, and your game gets built from what you describe.</p>
+      <p class="modal__meta">Storybased Game Maker — v2</p>
+      <div class="modal__actions">
+        <button class="btn btn--primary" type="button" id="about-close">Close</button>
+      </div>
+    </article>
+  </dialog>
+
+  <dialog class="modal" id="clear-dialog" aria-labelledby="clear-heading">
+    <article class="modal__content">
+      <h2 id="clear-heading" class="modal__title">Restart Conversation</h2>
+      <p>Are you sure you want to restart? Your current conversation will be cleared.</p>
+      <div class="modal__actions">
+        <button class="btn btn--danger" type="button" id="clear-confirm">Yes, restart</button>
+        <button class="btn btn--ghost"  type="button" id="clear-cancel">Cancel</button>
+      </div>
+    </article>
+  </dialog>
+
+  <script src="{{ url_for('static', filename='script_v2.js') }}"></script>
+</body>
+</html>

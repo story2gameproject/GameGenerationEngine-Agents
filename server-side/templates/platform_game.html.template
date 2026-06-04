@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$GAME_TITLE</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: 'Courier New', monospace; overflow: hidden; }
+  canvas { display: block; border: 2px solid #333; }
+  #ui { color: #fff; font-size: 13px; margin-top: 8px; text-align: center; opacity: 0.7; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="1400" height="550"></canvas>
+<div id="ui">Arrow keys / WASD to move &nbsp;|&nbsp; Space / Up to jump</div>
+
+<script>
+// ============================================================
+//  DATA — injected by the multi-agent system
+// ============================================================
+const GAME_TITLE         = $GAME_TITLE;
+const PLAYER_NAME        = $PLAYER_NAME;
+const GOAL_TYPE          = $GOAL_TYPE;
+const GOAL_LABEL         = $GOAL_LABEL;
+const WIN_MESSAGE        = $WIN_MESSAGE;
+const TARGET_NAME        = $TARGET_NAME;
+const HERO_IMG_URL       = $HERO_IMG_URL;
+const OBSTACLE_IMG_URL   = $OBSTACLE_IMG_URL;
+const TARGET_IMG_URL     = $TARGET_IMG_URL;
+const SKY_COLOR          = $SKY_COLOR;
+const GROUND_COLOR       = $GROUND_COLOR;
+const PLATFORM_COLOR     = $PLATFORM_COLOR;
+const BG_LAYERS          = $BACKGROUND_LAYERS_JS;
+const BG_IMAGE_URL       = $BACKGROUND_IMAGE_URL;
+const PLATFORMS_DATA     = $PLATFORMS_JS;
+const ENEMIES_DATA       = $ENEMIES_JS;
+const COLLECTIBLES_DATA  = $COLLECTIBLES_JS;
+const COLLECTIBLES_NEEDED = $COLLECTIBLES_REQUIRED;
+const GOAL_X             = $GOAL_X;
+const GOAL_Y             = $GOAL_Y;
+const LEVEL_WIDTH        = $LEVEL_WIDTH;
+
+// ============================================================
+//  ENGINE — never modified by AI
+// ============================================================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+
+const W = canvas.width;
+const H = canvas.height;
+const GROUND_TOP  = 490;
+const GROUND_H    = H - GROUND_TOP;
+// Visual sprite dimensions (in pixels on screen).
+// Bumped to ~50% larger than the SVG era so AI characters/obstacles are
+// dominant against the AI-generated NYC backdrop (where buildings are huge).
+const HERO_W         = 100;
+const HERO_H         = 140;
+const OBSTACLE_W     = 80;
+const OBSTACLE_H     = 100;
+const TARGET_SMALL_W = 50;    // collectibles
+const TARGET_SMALL_H = 50;
+const TARGET_LARGE_W = 100;   // rescue-mission character at goal — match hero
+const TARGET_LARGE_H = 140;
+const GRAVITY     = 0.55;
+const JUMP_FORCE  = -13;
+const PLAYER_SPEED = 5;
+
+// ── Input ────────────────────────────────────────────────────
+const keys = {};
+window.addEventListener('keydown', e => {
+  initAudio();          // browsers require a user gesture before audio starts
+  keys[e.code] = true;
+  e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ── Audio System ─────────────────────────────────────────────
+let audioCtx      = null;
+let bgNoteIndex   = 0;
+let bgTimer       = null;
+let audioReady    = false;
+let wasOnGround   = false;
+let soundPlayed   = { gameover: false, win: false };
+
+// Per-goal-type music configs
+const _MUSIC = {
+  collecting_goals: {
+    wave:'sine',    noteMs:170,  vol:0.11,
+    mel: [523,659,784,659,523,440,523,659,784,880,784,659,523,523],
+    bas: [131,131,131,131,165,165,131,131,131,131,196,196,131,131],
+  },
+  rescue_mission: {
+    wave:'triangle', noteMs:300, vol:0.09,
+    mel: [440,392,349,392,440,440,440,392,392,392,440,523,523,440],
+    bas: [110,98, 87, 98, 110,110,110,98, 98, 98, 110,131,131,110],
+  },
+  escape: {
+    wave:'sawtooth', noteMs:130, vol:0.07,
+    mel: [440,494,523,587,659,587,523,494,440,392,349,392,440,494],
+    bas: [110,123,131,147,165,147,131,123,110,98, 87, 98, 110,123],
+  },
+  time_trial: {
+    wave:'square',  noteMs:110,  vol:0.06,
+    mel: [523,659,784,659,880,784,659,523,494,523,659,784,880,784],
+    bas: [131,165,196,165,220,196,165,131,123,131,165,196,220,196],
+  },
+  obstacle_run: {
+    wave:'triangle', noteMs:150, vol:0.09,
+    mel: [392,440,494,523,494,440,392,349,392,440,523,659,523,440],
+    bas: [98, 110,123,131,123,110,98, 87, 98, 110,131,165,131,110],
+  },
+};
+
+function initAudio() {
+  if (audioReady) return;
+  try {
+    audioCtx  = new (window.AudioContext || window.webkitAudioContext)();
+    audioReady = true;
+    // Background music loop intentionally disabled — players found it
+    // repetitive. SFX (jump/land/collect/win/gameover) still play via
+    // playSound() below. To re-enable music, uncomment the next line:
+    // _bgTick();
+  } catch(e) {}
+}
+
+function _note(freq, startT, durS, vol, wave) {
+  if (!audioCtx || !freq) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = wave || 'sine';
+  o.connect(g); g.connect(audioCtx.destination);
+  o.frequency.setValueAtTime(freq, startT);
+  g.gain.setValueAtTime(vol, startT);
+  g.gain.exponentialRampToValueAtTime(0.0001, startT + durS * 0.85);
+  o.start(startT); o.stop(startT + durS);
+}
+
+function _bgTick() {
+  const cfg = _MUSIC[GOAL_TYPE] || _MUSIC.collecting_goals;
+  const idx = bgNoteIndex % cfg.mel.length;
+  if (state === 'playing' && audioCtx) {
+    const t = audioCtx.currentTime;
+    _note(cfg.mel[idx], t, cfg.noteMs / 1000 * 0.9, cfg.vol,       cfg.wave);
+    _note(cfg.bas[idx], t, cfg.noteMs / 1000 * 0.8, cfg.vol * 0.6, 'sine');
+  }
+  bgNoteIndex++;
+  bgTimer = setTimeout(_bgTick, (state === 'playing') ? ((_MUSIC[GOAL_TYPE] || _MUSIC.collecting_goals).noteMs) : 300);
+}
+
+function playSound(type) {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const sfx = {
+    // Punchier jump — rising "boing" with two clear notes
+    jump: ()    => {
+      _note(330, t,        0.07, 0.32, 'square');
+      _note(520, t + 0.05, 0.10, 0.28, 'square');
+      _note(660, t + 0.10, 0.08, 0.20, 'sine');
+    },
+    // Solid thud on landing
+    land: ()    => {
+      _note(180, t,        0.08, 0.30, 'square');
+      _note(110, t + 0.04, 0.10, 0.22, 'sine');
+    },
+    collect: () => {
+      [600,800,1000].forEach((f,i) => _note(f, t + i*0.05, 0.12, 0.18, 'sine'));
+    },
+    gameover: () => {
+      [300,220,160,110].forEach((f,i) => _note(f, t + i*0.16, 0.18, 0.25, 'sawtooth'));
+    },
+    win: () => {
+      [523,659,784,659,784,1047].forEach((f,i) => _note(f, t + i*0.14, 0.18, 0.28, 'sine'));
+      [262,330,392,330,392,523 ].forEach((f,i) => _note(f, t + i*0.14, 0.16, 0.18, 'sine'));
+    },
+  };
+  if (sfx[type]) sfx[type]();
+}
+
+// ── SVG sprite loader + renderer ─────────────────────────────
+// Each game has 3 sprites (hero, obstacle, target) generated as SVG by the
+// asset agent. We load them as Image objects once, then draw via canvas
+// drawImage every frame — same render cost as a bitmap sprite.
+const SPRITES = { hero: null, obstacle: null, target: null };
+
+function loadSpriteImage(name, url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload  = () => { SPRITES[name] = img; resolve(); };
+    img.onerror = () => { console.warn('Failed to load sprite', name, url); resolve(); };
+    img.src = url;  // Either a PNG (AI sprite) or SVG file URL — both work via <Image>
+  });
+}
+
+function drawSpriteImage(img, x, y, w, h, flipped) {
+  if (!img) {
+    // Sprite hasn't loaded yet (rare) — draw a placeholder rectangle
+    ctx.fillStyle = '#888';
+    ctx.fillRect(x, y, w, h);
+    return;
+  }
+  if (flipped) {
+    ctx.save();
+    ctx.translate(x + w, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    ctx.drawImage(img, x, y, w, h);
+  }
+}
+
+// ── Game state ────────────────────────────────────────────────
+let state = 'playing'; // 'playing' | 'gameover' | 'win'
+let score = 0;
+let collected = 0;
+let cameraX = 0;
+// Wall-clock time the current run started. Used to give escape-mode
+// pursuers an `activation_delay_ms` head start before they begin chasing.
+let gameStartTime = Date.now();
+
+const player = {
+  x: 80, y: GROUND_TOP - HERO_H,
+  vx: 0, vy: 0,
+  // Hitbox is slightly tighter than the visual sprite (forgiving gameplay)
+  w: HERO_W - 4, h: HERO_H - 4,
+  onGround: false,
+};
+
+// Deep-copy level data so restarts work
+function buildLevel() {
+  return {
+    platforms:    PLATFORMS_DATA.map(p => ({...p})),
+    enemies:      ENEMIES_DATA.map(e => ({...e, startX: e.x, startY: e.y, dir: 1, bobPhase: 0})),
+    collectibles: COLLECTIBLES_DATA.map(c => ({...c, collected: false})),
+    goal:         {x: GOAL_X, y: GOAL_Y, w: 32, h: 48},
+  };
+}
+
+let level = buildLevel();
+
+// ── Camera ───────────────────────────────────────────────────
+function updateCamera() {
+  const target = player.x - W * 0.35;
+  cameraX = Math.max(0, Math.min(target, LEVEL_WIDTH - W));
+}
+
+// ── Background ───────────────────────────────────────────────
+// Cached sky gradient + a tiny shared drift offset that gives slow background
+// layers a cloud-like motion even when the player isn't moving.
+let _skyGradient = null;
+function _buildSkyGradient() {
+  // Vertical gradient from SKY_COLOR at top fading to a lighter version near
+  // the horizon. The lighter shade is computed by blending toward white.
+  const lighter = _lighten(SKY_COLOR, 0.18);
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND_TOP);
+  g.addColorStop(0,   SKY_COLOR);
+  g.addColorStop(0.7, SKY_COLOR);
+  g.addColorStop(1,   lighter);
+  return g;
+}
+function _lighten(hex, amount) {
+  // Accepts #RGB or #RRGGBB, returns a hex blended `amount` toward white.
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const r = Math.min(255, parseInt(h.slice(0,2), 16) + Math.round(255 * amount));
+  const g = Math.min(255, parseInt(h.slice(2,4), 16) + Math.round(255 * amount));
+  const b = Math.min(255, parseInt(h.slice(4,6), 16) + Math.round(255 * amount));
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+// AI-generated background image, if the background agent succeeded.
+// We slow-scroll it for a subtle parallax effect.
+const BG_IMG = (BG_IMAGE_URL ? (() => {
+  const im = new Image();
+  im.src = BG_IMAGE_URL;
+  return im;
+})() : null);
+
+function drawBackground() {
+  // If we have a generated background image AND it's loaded, use it.
+  // Otherwise fall back to the procedural sky + parallax layers.
+  if (BG_IMG && BG_IMG.complete && BG_IMG.naturalWidth > 0) {
+    // VERY slow horizontal parallax so the image barely shifts across the
+    // 5000px level. This means visible tile seams almost never appear —
+    // the same single image covers the player's whole view for most of the run.
+    const PARALLAX_FACTOR = 0.08;
+    const parallaxX = -cameraX * PARALLAX_FACTOR;
+
+    // Stretch the image to be at least 1.6× the canvas width so that even
+    // when slow-scrolling, the seam between tiles stays off-screen most of
+    // the time. We keep aspect proportions by scaling height accordingly,
+    // then crop top/bottom to canvas height (object-fit: cover behavior).
+    const imgAspect = BG_IMG.naturalWidth / BG_IMG.naturalHeight;
+    const drawW = Math.max(W * 1.6, H * imgAspect);
+    const drawH = drawW / imgAspect;
+    // Vertically center the (now possibly tall) image, but anchor its bottom
+    // near the ground line so the visible part is the ground+lower buildings.
+    const drawY = Math.min(0, GROUND_TOP - drawH);
+
+    // Tile horizontally. With drawW = 1.6W and parallax 0.08, the seam only
+    // appears after the player has crossed ~20×W of camera distance, which
+    // is far beyond a single level.
+    const x0 = parallaxX % drawW;
+    for (let x = x0 - drawW; x < W + drawW; x += drawW) {
+      ctx.drawImage(BG_IMG, x, drawY, drawW, drawH);
+    }
+
+    // Ground (drawn on top so the player visually stands "in" the scene)
+    ctx.fillStyle = GROUND_COLOR;
+    ctx.fillRect(0, GROUND_TOP, W, GROUND_H);
+    return;
+  }
+
+  // ── Fallback: procedural sky + parallax rectangles ─────────────────────
+  if (!_skyGradient) _skyGradient = _buildSkyGradient();
+  ctx.fillStyle = _skyGradient;
+  ctx.fillRect(0, 0, W, H);
+
+  // A subtle time-based "twinkle" for any small bright layer (stars, windows)
+  // and a slow horizontal drift for the slowest layers (clouds).
+  const tNow   = Date.now();
+  const drift  = (tNow / 80) % (W * 2);
+
+  // Parallax layers — drawn in array order so far layers are behind near ones
+  BG_LAYERS.forEach((layer, i) => {
+    // Tiny stars/windows twinkle by varying alpha slightly
+    const isTinyBright = layer.width <= 6 && layer.height <= 6;
+    if (isTinyBright) {
+      const tw = 0.5 + 0.5 * Math.sin(tNow / 400 + i);
+      ctx.globalAlpha = 0.55 + 0.45 * tw;
+    } else {
+      ctx.globalAlpha = 1.0;
+    }
+
+    // Cloud-like horizontal drift on the slowest (most distant) layers
+    const cloudOffset = layer.scroll_factor < 0.2 ? drift * 0.5 : 0;
+    const span = W + layer.width + 200;
+    const lx = ((layer.x_offset - cameraX * layer.scroll_factor - cloudOffset) % span + span) % span - layer.width;
+
+    ctx.fillStyle = layer.color;
+    ctx.fillRect(lx,              layer.y, layer.width, layer.height);
+    ctx.fillRect(lx + span,       layer.y, layer.width, layer.height);
+  });
+  ctx.globalAlpha = 1.0;
+
+  // Ground
+  ctx.fillStyle = GROUND_COLOR;
+  ctx.fillRect(0, GROUND_TOP, W, GROUND_H);
+
+  // Subtle ground detail — thin horizontal line near the top of the ground
+  // suggesting a sidewalk edge / horizon strip.
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(0, GROUND_TOP, W, 2);
+}
+
+// ── Platforms ────────────────────────────────────────────────
+function drawPlatforms() {
+  ctx.fillStyle = PLATFORM_COLOR;
+  level.platforms.forEach(p => {
+    const sx = p.x - cameraX;
+    if (sx + p.width < 0 || sx > W) return;
+    ctx.fillRect(sx, p.y, p.width, p.height);
+    // Highlight edge
+    ctx.fillStyle = '#ffffff22';
+    ctx.fillRect(sx, p.y, p.width, 3);
+    ctx.fillStyle = PLATFORM_COLOR;
+  });
+}
+
+// ── Collectibles ─────────────────────────────────────────────
+function drawCollectibles() {
+  // Don't show collectibles for non-collecting goal types
+  if (COLLECTIBLES_NEEDED === 0) return;
+  level.collectibles.forEach(c => {
+    if (c.collected) return;
+    const sx = c.x - cameraX;
+    if (sx + TARGET_SMALL_W < 0 || sx > W) return;
+    // Glow effect
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur  = 8;
+    drawSpriteImage(SPRITES.target, sx, c.y, TARGET_SMALL_W, TARGET_SMALL_H, false);
+    ctx.shadowBlur = 0;
+  });
+}
+
+// ── Goal / flag ──────────────────────────────────────────────
+function drawGoal() {
+  const g  = level.goal;
+  const sx = g.x - cameraX;
+  if (sx + g.w < 0 || sx > W) return;
+
+  if (GOAL_TYPE === 'collecting_goals') {
+    // Classic flag pole + coloured flag
+    ctx.fillStyle = '#AAAAAA';
+    ctx.fillRect(sx + g.w / 2 - 2, g.y - 10, 4, g.h);
+    const goalUnlocked = collected >= COLLECTIBLES_NEEDED;
+    ctx.fillStyle = goalUnlocked ? '#00FF00' : '#FF6600';
+    ctx.fillRect(sx + g.w / 2 + 2, g.y - 10, 24, 16);
+    ctx.fillStyle = goalUnlocked ? '#00FF00' : '#FFFFFF';
+    ctx.font = '10px Courier New';
+    ctx.fillText(GOAL_LABEL, sx, g.y - 16);
+  } else {
+    // Draw the target character/object BIG at the goal
+    const charW = TARGET_LARGE_W;
+    const charH = TARGET_LARGE_H;
+    const charX = sx - charW / 2 + g.w / 2;   // centre on goal x
+    const charY = g.y - charH;                 // sit on the ground
+
+    // Pulsing halo behind character
+    const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 400);
+    ctx.save();
+    ctx.globalAlpha = pulse * 0.35;
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.ellipse(charX + charW / 2, charY + charH / 2, charW * 0.75, charH * 0.75, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Character sprite (big)
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur  = 24;
+    drawSpriteImage(SPRITES.target, charX, charY, charW, charH, false);
+    ctx.shadowBlur = 0;
+
+    // Small pedestal under character
+    ctx.fillStyle = '#888866';
+    ctx.fillRect(charX - 4, g.y, charW + 8, 10);
+    ctx.fillStyle = '#AAAAAA';
+    ctx.fillRect(charX - 4, g.y, charW + 8, 3);
+
+    // Label above character
+    ctx.fillStyle = '#00FF00';
+    ctx.font = 'bold 13px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(GOAL_LABEL, charX + charW / 2, charY - 8);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ── Enemies ──────────────────────────────────────────────────
+// Pixel range within which an enemy will start chasing the player.
+// Anything farther away than this stays put (or patrols around its origin)
+// so the level isn't a swarm rushing the player from off-screen.
+const CHASE_RANGE = 700;
+
+function updateEnemies() {
+  const isEscape = (GOAL_TYPE === 'escape');
+
+  level.enemies.forEach(e => {
+    if (e.motion === 'stationary') {
+      // True hazards (spike traps, etc.) — never move
+      return;
+    }
+
+    if (isEscape) {
+      // ─── Escape mode: ONE persistent pursuer, delayed start ────────────
+      // The pursuer holds position for `activation_delay_ms` (set by the
+      // level agent) so the player gets a head start. After that it chases
+      // rightward forever. If it catches the player → game over via the
+      // collision check elsewhere.
+      const elapsed = Date.now() - gameStartTime;
+      if (elapsed < (e.activation_delay_ms || 2000)) {
+        // Still in the grace period — pursuer waits in place
+        return;
+      }
+      e.activated = true;
+      e.dir = 1;
+      e.x += e.speed;
+    } else {
+      // ─── Default mode: encounter-based chase ───────────────────────────
+      // First time the player gets within CHASE_RANGE, the enemy LOCKS IN a
+      // direction (toward the player at that moment) and keeps moving that
+      // way forever. Enemies that pass the player keep going off-screen
+      // instead of stacking up around the player's position.
+      if (!e.activated) {
+        const dx0 = player.x - e.x;
+        if (Math.abs(dx0) < CHASE_RANGE) {
+          e.activated = true;
+          e.dir = dx0 > 0 ? 1 : -1;
+        } else {
+          // Far from the player → gentle idle drift so they're not perfectly frozen
+          e.x += e.speed * 0.3 * (e.dir || -1);
+          if (e.x > e.startX + e.patrol_range || e.x < e.startX - e.patrol_range) {
+            e.dir = (e.dir || -1) * -1;
+          }
+        }
+      } else {
+        e.x += e.dir * e.speed;
+      }
+    }
+
+    // Flying enemies bob vertically once they're moving (escape mode too)
+    if (e.motion === 'flying' && e.activated) {
+      e.bobPhase = (e.bobPhase || 0) + (e.bob_speed || 0.03);
+      e.y = e.startY + Math.sin(e.bobPhase) * (e.bob_amplitude || 30);
+    }
+  });
+}
+
+function drawEnemies() {
+  level.enemies.forEach(e => {
+    const sx = e.x - cameraX;
+    if (sx + OBSTACLE_W < 0 || sx > W) return;
+    // Enemy walks left = mirror sprite
+    drawSpriteImage(SPRITES.obstacle, sx, e.y - OBSTACLE_H, OBSTACLE_W, OBSTACLE_H, e.dir > 0);
+  });
+}
+
+// ── Player physics ───────────────────────────────────────────
+function updatePlayer() {
+  const prevOnGround = player.onGround;
+
+  // Horizontal movement
+  if (keys['ArrowLeft']  || keys['KeyA']) player.vx = -PLAYER_SPEED;
+  else if (keys['ArrowRight'] || keys['KeyD']) player.vx =  PLAYER_SPEED;
+  else player.vx = 0;
+
+  // Jump — play sound on take-off
+  if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+    playSound('jump');
+  }
+
+  player.vy += GRAVITY;
+  player.x  += player.vx;
+  player.y  += player.vy;
+
+  player.x = Math.max(0, player.x);
+  player.onGround = false;
+
+  // Ground collision
+  if (player.y + player.h >= GROUND_TOP) {
+    player.y = GROUND_TOP - player.h;
+    player.vy = 0;
+    player.onGround = true;
+  }
+
+  // Platform collisions (top only)
+  level.platforms.forEach(p => {
+    if (
+      player.vy >= 0 &&
+      player.x + player.w > p.x &&
+      player.x < p.x + p.width &&
+      player.y + player.h > p.y &&
+      player.y + player.h < p.y + p.height + 16
+    ) {
+      player.y = p.y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  });
+
+  // Landing sound — only once per landing
+  if (!prevOnGround && player.onGround) playSound('land');
+
+  // Keep within level bounds
+  player.x = Math.min(player.x, LEVEL_WIDTH - player.w);
+}
+
+// ── Collision checks ─────────────────────────────────────────
+function checkCollisions() {
+  // Collectibles
+  level.collectibles.forEach(c => {
+    if (c.collected) return;
+    if (
+      player.x < c.x + TARGET_SMALL_W && player.x + player.w > c.x &&
+      player.y < c.y + TARGET_SMALL_H && player.y + player.h > c.y
+    ) {
+      c.collected = true;
+      collected++;
+      score += 100;
+      playSound('collect');         // 🎵 item collected
+    }
+  });
+
+  // Enemies — use a TIGHT damage hitbox, smaller than the visual sprite, so
+  // "near miss" doesn't kill the player. The hitbox is centered horizontally
+  // within the sprite and anchored to the bottom (where the visible body sits
+  // after rembg's bbox crop).
+  const HERO_HIT_W = player.w * 0.45;
+  const HERO_HIT_H = player.h * 0.85;
+  const HERO_HIT_X = player.x + (player.w - HERO_HIT_W) / 2;
+  const HERO_HIT_Y = player.y + (player.h - HERO_HIT_H);
+  const ENEMY_HIT_W_RATIO = 0.55;
+  const ENEMY_HIT_H_RATIO = 0.80;
+
+  level.enemies.forEach(e => {
+    const ehitW = OBSTACLE_W * ENEMY_HIT_W_RATIO;
+    const ehitH = OBSTACLE_H * ENEMY_HIT_H_RATIO;
+    const ehitX = e.x + (OBSTACLE_W - ehitW) / 2;
+    const ehitY = e.y - ehitH;  // anchor to bottom (feet of enemy)
+    if (
+      HERO_HIT_X < ehitX + ehitW && HERO_HIT_X + HERO_HIT_W > ehitX &&
+      HERO_HIT_Y < ehitY + ehitH && HERO_HIT_Y + HERO_HIT_H > ehitY
+    ) {
+      if (!soundPlayed.gameover) { playSound('gameover'); soundPlayed.gameover = true; }
+      state = 'gameover';
+    }
+  });
+
+  // Goal (only reachable once enough collectibles collected)
+  const g = level.goal;
+  if (
+    collected >= COLLECTIBLES_NEEDED &&
+    player.x + player.w > g.x &&
+    player.x < g.x + g.w &&
+    player.y + player.h > g.y - 10 &&
+    player.y < g.y + g.h
+  ) {
+    score += 500;
+    if (!soundPlayed.win) { playSound('win'); soundPlayed.win = true; }
+    state = 'win';
+  }
+
+  // Score from movement
+  score = Math.max(score, Math.floor(player.x / 10));
+}
+
+// ── HUD ──────────────────────────────────────────────────────
+function drawHUD() {
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0, 0, W, 36);
+
+  ctx.font = 'bold 14px Courier New';
+
+  // LEFT: game title — anchored to the left edge
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'left';
+  ctx.fillText(GAME_TITLE, 12, 22);
+
+  // RIGHT: goal text — anchored to the right edge so it never overlaps
+  // the title. We use ctx.measureText so we can place the player name + score
+  // immediately before it, with proper spacing.
+  let goalText, goalColor;
+  if (COLLECTIBLES_NEEDED > 0) {
+    const needed = Math.max(0, COLLECTIBLES_NEEDED - collected);
+    if (needed > 0) {
+      goalText = 'Collect ' + needed + ' more ' + TARGET_NAME;
+      goalColor = '#FFD700';
+    } else {
+      goalText = '✓ Reach the ' + TARGET_NAME + '!';
+      goalColor = '#00FF00';
+    }
+  } else {
+    goalText = 'Find the ' + TARGET_NAME + '!';
+    goalColor = '#00DDFF';
+  }
+
+  const goalWidth = ctx.measureText(goalText).width;
+  const goalX     = W - goalWidth - 12;     // anchor to right edge
+  ctx.fillStyle = goalColor;
+  ctx.fillText(goalText, goalX, 22);
+
+  // Middle/left of the goal text: player name + score (when applicable)
+  let statusText = PLAYER_NAME;
+  if (COLLECTIBLES_NEEDED > 0) {
+    statusText += '  |  Score: ' + score;
+  }
+  statusText += '  |  ';
+  const statusWidth = ctx.measureText(statusText).width;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText(statusText, goalX - statusWidth, 22);
+}
+
+// ── Overlay screens ──────────────────────────────────────────
+function drawOverlay(title, sub, btnText) {
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 42px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(title, W / 2, H / 2 - 60);
+
+  ctx.font = '20px Courier New';
+  ctx.fillStyle = '#CCCCCC';
+  ctx.fillText(sub, W / 2, H / 2 - 20);
+
+  // Only show final Score on the win/game-over overlay for collecting goals
+  if (COLLECTIBLES_NEEDED > 0) {
+    ctx.font = '16px Courier New';
+    ctx.fillStyle = '#AAAAAA';
+    ctx.fillText('Score: ' + score, W / 2, H / 2 + 16);
+  }
+
+  // Button
+  const bw = 200, bh = 44;
+  const bx = W / 2 - bw / 2, by = H / 2 + 44;
+  ctx.fillStyle = '#5865F2';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 16px Courier New';
+  ctx.fillText(btnText, W / 2, by + 28);
+  ctx.textAlign = 'left';
+
+  // Click handler (registered once)
+  canvas.onclick = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const mx = (e.clientX - r.left) * (W / r.width);
+    const my = (e.clientY - r.top)  * (H / r.height);
+    if (mx > bx && mx < bx + bw && my > by && my < by + bh) {
+      restartGame();
+    }
+  };
+}
+
+function restartGame() {
+  state     = 'playing';
+  score     = 0;
+  collected = 0;
+  cameraX   = 0;
+  player.x  = 80;
+  player.y  = GROUND_TOP - player.h;
+  player.vx = 0;
+  player.vy = 0;
+  player.onGround = false;
+  soundPlayed = { gameover: false, win: false };  // reset one-shot sounds
+  bgNoteIndex = 0;                                // restart melody from top
+  gameStartTime = Date.now();                     // restart the escape-mode delay
+  level = buildLevel();
+  canvas.onclick = null;
+}
+
+// ── Draw player ──────────────────────────────────────────────
+// Track facing direction so the hero doesn't flicker when standing still.
+let playerFacing = 1; // 1 = right, -1 = left
+function drawPlayer() {
+  if (player.vx < 0) playerFacing = -1;
+  else if (player.vx > 0) playerFacing = 1;
+  // Visual is slightly bigger than hitbox — centre horizontally, anchor feet
+  const visX = (player.x - cameraX) - (HERO_W - player.w) / 2;
+  const visY = player.y - (HERO_H - player.h);
+  drawSpriteImage(SPRITES.hero, visX, visY, HERO_W, HERO_H, playerFacing < 0);
+}
+
+// ── Main loop ────────────────────────────────────────────────
+function gameLoop() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+
+  if (state === 'playing') {
+    updatePlayer();
+    updateEnemies();
+    updateCamera();
+    checkCollisions();
+
+    drawPlatforms();
+    drawCollectibles();
+    drawGoal();
+    drawEnemies();
+    drawPlayer();
+    drawHUD();
+
+  } else if (state === 'gameover') {
+    updateCamera();
+    drawPlatforms();
+    drawCollectibles();
+    drawGoal();
+    drawEnemies();
+    drawPlayer();
+    drawHUD();
+    drawOverlay('GAME OVER', 'You were caught!', 'Try Again');
+
+  } else if (state === 'win') {
+    updateCamera();
+    drawPlatforms();
+    drawCollectibles();
+    drawGoal();
+    drawEnemies();
+    drawPlayer();
+    drawHUD();
+    drawOverlay('YOU WIN! 🎮', WIN_MESSAGE + ', ' + PLAYER_NAME + '!', 'Play Again');
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Load all SVG sprites as Image objects, THEN start the game loop.
+// (drawImage needs decoded images; we can't draw an SVG synchronously.)
+Promise.all([
+  loadSpriteImage('hero',     HERO_IMG_URL),
+  loadSpriteImage('obstacle', OBSTACLE_IMG_URL),
+  loadSpriteImage('target',   TARGET_IMG_URL),
+]).then(() => {
+  gameLoop();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Generated content — created at runtime, not source
+client-side/static/uploads/
+client-side/static/games/
+client-side/static/cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+/tmp/
