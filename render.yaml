@@ -8,11 +8,12 @@ services:
     name: storybased-game-maker
     runtime: python
     plan: free
-    # Pre-cache the rembg U2Net model during build so the first user request
-    # doesn't have to wait for a 180 MB download.
+    # Pre-cache the lightweight u2netp model during build so the first user
+    # request doesn't pay the download cost. Using u2netp (~4 MB) instead of
+    # u2net (~176 MB) keeps us within Render's free-tier 512 MB RAM budget.
     buildCommand: |
       pip install -r requirements.txt
-      python -c "from rembg import new_session; new_session('u2net'); print('U2Net model pre-cached')"
+      python -c "from rembg import new_session; new_session('u2netp'); print('u2netp model pre-cached')"
     startCommand: python server-side/web_server_v2.py
     envVars:
       # API keys must be set manually in the Render dashboard for security.

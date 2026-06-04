@@ -208,13 +208,19 @@ def _sdxl_sprite_image(description: str, role: str):
 # Cache a single rembg session globally — initializing it costs ~1s and we want
 # all sprite calls to share it. Lazy-loaded so the import only happens when AI
 # sprites are actually used (and module import stays cheap).
+#
+# Model choice: `u2netp` is the lightweight U2Net variant (~4 MB vs ~176 MB for
+# full u2net). Slightly lower segmentation quality but fits comfortably on
+# small hosts like Render's free tier (512 MB RAM). Override via REMBG_MODEL
+# env var if you want full u2net on a beefier machine.
 _REMBG_SESSION = None
 def _get_rembg_session():
     global _REMBG_SESSION
     if _REMBG_SESSION is None:
         from rembg import new_session
-        logger.info("Initializing rembg U2Net session…")
-        _REMBG_SESSION = new_session("u2net")
+        model_name = os.getenv("REMBG_MODEL", "u2netp")
+        logger.info("Initializing rembg session with model %r…", model_name)
+        _REMBG_SESSION = new_session(model_name)
     return _REMBG_SESSION
 
 
