@@ -132,7 +132,8 @@ def _singularize(text: str) -> str:
 # A strong, consistent style anchor used by EVERY sprite prompt so the hero,
 # obstacle and target all end up looking like they came from the same game.
 # The magenta-background instruction is non-negotiable — our chroma-key
-# post-processing relies on it.
+# post-processing (in _remove_bg_local below) relies on it. If you change
+# the background color phrasing here, update the RGB thresholds there too.
 _STYLE_ANCHOR = (
     "16-bit pixel art sprite, retro arcade style, "
     "Castlevania Symphony of the Night aesthetic, "
@@ -140,7 +141,9 @@ _STYLE_ANCHOR = (
     "ONE individual subject completely alone, "
     "centered, isolated, NO crowd, NO group, NO duplicates, "
     "side view, no text, no watermark, no signature, no border, no frame, "
-    + CHROMA_KEY_PROMPT_HINT
+    "plain solid bright magenta background, "
+    "uniform #FF00FF color, no other background elements, "
+    "no shadow, no gradient"
 )
 
 
@@ -208,24 +211,16 @@ def _sdxl_sprite_image(description: str, role: str):
     raise last_exc if last_exc else RuntimeError("SDXL failed after 3 attempts")
 
 
-# Background removal via chroma-key: we ask SDXL to paint each sprite on a
-# bright magenta backdrop, then erase all magenta pixels here in Python.
-# This replaced an earlier rembg/U2Net approach that needed ~250 MB of RAM
-# for onnxruntime + the segmentation model — far too much for Render's free
-# tier (512 MB total). The chroma-key version uses only Pillow + numpy and
-# adds maybe 5 MB of working memory.
+# Background removal via chroma-key: SDXL paints each sprite on a bright
+# magenta backdrop (instructed via the _STYLE_ANCHOR prompt above), then we
+# erase all magenta pixels here in Python. This replaced an earlier
+# rembg/U2Net approach that needed ~250 MB of RAM for onnxruntime + the
+# segmentation model — far too much for Render's free tier (512 MB total).
+# The chroma-key version uses only Pillow + numpy and adds ~5 MB of working
+# memory.
 #
 # Magenta (#FF00FF) was chosen because it almost never appears in real
 # subjects, giving us a wide safety margin when thresholding.
-
-# The exact phrase the SDXL prompt asks for. Put it in one place so the prompt
-# and the chroma-key threshold stay in sync.
-CHROMA_KEY_PROMPT_HINT = (
-    "plain solid bright magenta background, "
-    "uniform #FF00FF color, no other background elements, "
-    "no shadow, no gradient"
-)
-
 
 def _remove_bg_local(pil_image):
     """Replace bright-magenta pixels with transparency, then crop to the
