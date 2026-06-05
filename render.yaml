@@ -8,12 +8,14 @@ services:
     name: storybased-game-maker
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    # Pre-download the u2netp model during the build step so the first user's
+    # rembg subprocess doesn't have to fetch it from GitHub at request time.
+    buildCommand: |
+      pip install -r requirements.txt
+      python -c "from rembg import new_session; new_session('u2netp'); print('u2netp pre-cached')"
     startCommand: python server-side/web_server_v2.py
     envVars:
       # API keys must be set manually in the Render dashboard for security.
-      # The two below will appear with empty values — go to your service →
-      # Environment → set their real values from your local .env.
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: HF_TOKEN

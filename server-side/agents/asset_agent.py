@@ -23,10 +23,26 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
+import tempfile
+import threading
 import time
 from io import BytesIO
 
 from . import asset_cache
+
+# Path to the standalone rembg worker script (sibling of the agents/ folder)
+_REMBG_WORKER = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "rembg_worker.py"
+))
+
+# Serializes calls to the rembg subprocess. Without this, the orchestrator's
+# 3-way parallel sprite generation would spawn 3 rembg workers simultaneously,
+# each using ~250 MB → ~750 MB total → OOM on Render's 512 MB free tier.
+# With the lock, only ONE worker runs at a time and total peak stays around
+# ~500 MB (main process + one worker).
+_REMBG_LOCK = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -231,49 +247,73 @@ def _sdxl_sprite_image(description: str, role: str):
 
 def _remove_bg_local(pil_image):
     """Strip the background from a generated sprite, returning a PIL Image
-    with alpha and cropped to the visible bounding box."""
+    with alpha and cropped to the visible bounding box.
+
+    Two-tier strategy:
+      1. PRIMARY — spawn the rembg worker subprocess. High-quality
+         AI-based segmentation, works for any background SDXL produces.
+         Memory cost is paid only during the subprocess's lifetime.
+      2. FALLBACK — corner-sampling chroma-key in-process. Used only if
+         the subprocess crashes or times out.
+    """
     out = None
     try:
-        out = _remove_bg_via_hf(pil_image)
+        out = _remove_bg_via_subprocess(pil_image)
+        logger.info("Sprite background removed via rembg subprocess")
     except Exception as exc:
-        logger.warning("HF RMBG failed (%s) — falling back to chroma-key", exc)
+        logger.warning("rembg subprocess failed (%s) — falling back to chroma-key", exc)
         out = _remove_bg_chroma_key(pil_image)
 
-    # Crop to non-transparent bbox so sprite fills the frame
+    # Crop to non-transparent bbox so the sprite fills its frame
     bbox = out.getbbox()
     if bbox is None:
         return out
     cropped = out.crop(bbox)
-    logger.info("Sprite background removed %s → %s (cropped to subject)",
-                out.size, cropped.size)
+    logger.info("Sprite cropped %s → %s", out.size, cropped.size)
     return cropped
 
 
-def _remove_bg_via_hf(pil_image):
-    """Call HF's briaai/RMBG-1.4 model via the router endpoint to strip the
-    background. Returns a PIL Image in RGBA mode. Raises on any failure
-    (caller falls through to chroma-key)."""
-    import requests
-    from io import BytesIO
+def _remove_bg_via_subprocess(pil_image):
+    """Spawn a Python subprocess running rembg_worker.py. Communicate via
+    temp PNG files. The subprocess's ~250 MB of memory is reclaimed when
+    it exits, so successive sprite calls don't accumulate."""
     from PIL import Image as PILImage
 
-    token = os.getenv("HF_TOKEN")
-    if not token:
-        raise RuntimeError("HF_TOKEN not set")
+    if not os.path.exists(_REMBG_WORKER):
+        raise RuntimeError(f"rembg worker not found at {_REMBG_WORKER}")
 
-    buf = BytesIO()
-    pil_image.save(buf, format="PNG")
+    # Two named-temp files for input and output
+    in_fd,  in_path  = tempfile.mkstemp(suffix=".png", prefix="rembg_in_")
+    out_fd, out_path = tempfile.mkstemp(suffix=".png", prefix="rembg_out_")
+    os.close(in_fd)
+    os.close(out_fd)
 
-    resp = requests.post(
-        "https://router.huggingface.co/hf-inference/models/briaai/RMBG-1.4",
-        headers={"Authorization": f"Bearer {token}"},
-        data=buf.getvalue(),
-        timeout=60,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"RMBG returned HTTP {resp.status_code}: {resp.text[:200]}")
+    try:
+        pil_image.save(in_path, "PNG")
 
-    return PILImage.open(BytesIO(resp.content)).convert("RGBA")
+        # Serialize subprocess execution — only one rembg worker at a time
+        with _REMBG_LOCK:
+            result = subprocess.run(
+                [sys.executable, _REMBG_WORKER, in_path, out_path],
+                capture_output=True,
+                timeout=60,    # generous; rembg usually takes ~3-5s
+                check=False,
+            )
+
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="replace")[:300]
+            raise RuntimeError(f"worker exit {result.returncode}: {err}")
+
+        # Force a full read into memory before deleting the temp file
+        img = PILImage.open(out_path).convert("RGBA")
+        img.load()
+        return img
+    finally:
+        for p in (in_path, out_path):
+            try:
+                os.unlink(p)
+            except (FileNotFoundError, OSError):
+                pass
 
 
 def _remove_bg_chroma_key(pil_image):
