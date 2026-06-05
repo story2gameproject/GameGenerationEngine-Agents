@@ -132,16 +132,35 @@ class ChatApp {
       });
 
       const data = await response.json();
-      this._removeTypingIndicator();
 
       if (!data.success) {
+        this._removeTypingIndicator();
         this._addMessage(`Error: ${data.error ?? 'Unknown error'}`, 'assistant');
         return;
       }
 
       const text = data.response ?? '';
 
+      // Async generation path. The server kicks off a background thread
+      // and gives us a job_id; we poll /api/job/<id> until done. The
+      // typing indicator stays visible the whole time so the user knows
+      // we're still working.
+      if (data.type === 'job_started' && data.job_id) {
+        // Show the "Generating your game…" message above the spinner so
+        // the user has context for the wait.
+        this._removeTypingIndicator();
+        this._addMessage(text, 'assistant');
+        this._messageHistory.push({ role: 'assistant', content: text });
+        this._addTypingIndicator();
+        await this._pollJob(data.job_id);
+        return;
+      }
+
+      this._removeTypingIndicator();
+
       if (data.type === 'game_ready' && data.game_url) {
+        // Legacy synchronous path — kept for backwards compat if the
+        // server ever returns a game_ready directly.
         this._addMessage(text, 'assistant');
         this._messageHistory.push({ role: 'assistant', content: text });
         this._renderPlayButton(data.game_url);
@@ -168,6 +187,69 @@ class ChatApp {
       this._dom.sendBtn.disabled = false;
       this._dom.messageInput.focus();
     }
+  }
+
+  /**
+   * Poll /api/job/<id> until the job finishes (or we hit the safety cap).
+   * The server runs game generation in a background thread; this is how
+   * we get the result without holding open a 3-minute HTTP request, which
+   * Render's proxy would cut at ~100s.
+   */
+  async _pollJob(jobId) {
+    const POLL_INTERVAL_MS = 3000;     // every 3 seconds
+    const MAX_POLLS        = 200;      // 200 × 3s = 10 min hard cap
+    let consecutiveErrors  = 0;
+
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+      try {
+        const resp = await fetch(`/api/job/${jobId}`);
+        const data = await resp.json();
+        consecutiveErrors = 0;
+
+        if (!data.success) continue;
+
+        if (data.status === 'done') {
+          this._removeTypingIndicator();
+          const msg = data.message ?? 'Your game is ready!';
+          this._addMessage(msg, 'assistant');
+          this._messageHistory.push({ role: 'assistant', content: msg });
+          if (data.game_url) this._renderPlayButton(data.game_url);
+          return;
+        }
+
+        if (data.status === 'error') {
+          this._removeTypingIndicator();
+          const msg = data.message ?? 'Game generation failed. Please try again.';
+          this._addMessage(msg, 'assistant');
+          this._messageHistory.push({ role: 'assistant', content: msg });
+          return;
+        }
+        // status === 'working' → keep polling
+      } catch (err) {
+        // Transient network errors are normal on Render's free tier
+        // (server sleep/wake, brief drops). Don't give up — just keep
+        // polling until we hit the consecutive-error threshold.
+        console.warn('Job poll failed:', err);
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= 5) {
+          this._removeTypingIndicator();
+          this._addMessage(
+            'Lost connection to the server. Please check your network and try again.',
+            'assistant'
+          );
+          return;
+        }
+      }
+    }
+
+    // Hit the 10-minute cap
+    this._removeTypingIndicator();
+    this._addMessage(
+      'Game generation is taking longer than expected. Please try again in a minute.',
+      'assistant'
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -439,8 +521,17 @@ class ChatApp {
   _scrollToBottom() {
     // The scroll container is the parent .chat-wrap (it has overflow-y: auto),
     // not #chat-messages itself — that's just the content inside it.
+    //
+    // We defer the scroll to the next animation frame because scrollHeight
+    // can read stale immediately after appendChild — the new node hasn't
+    // been laid out yet, so the browser reports the *old* scrollHeight and
+    // we end up scrolling to "almost-bottom", missing the last message.
+    // Reading scrollHeight in the next frame guarantees layout has happened.
     const wrap = this._dom.chatMessages.parentElement;
-    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+    if (!wrap) return;
+    requestAnimationFrame(() => {
+      wrap.scrollTop = wrap.scrollHeight;
+    });
   }
 
   _announce(text) {

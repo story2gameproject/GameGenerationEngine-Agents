@@ -4,6 +4,7 @@ Web-based Game Maker Chat Application Server - V3 (Cleaned up, Game Only)
 
 import logging
 import os
+import threading
 import time
 import uuid
 
@@ -75,6 +76,26 @@ conversation_questions = {
 }
 
 user_states = {}
+
+# ──────────────────────────────────────────────────────────────────────────
+# Background job tracking
+# ──────────────────────────────────────────────────────────────────────────
+# Game generation takes 2–4 minutes on Render's free tier (rembg subprocess
+# is the bottleneck — 3 sprites × ~30–60s serialized). That's well past
+# Render's HTTP-proxy timeout (~100s for non-streaming responses), so we
+# cannot block on /api/chat for the full duration — the proxy will cut the
+# connection and the browser will get an empty body ("Unexpected end of JSON
+# input").
+#
+# Fix: when the conversation ends, we start a background thread, return a
+# job_id immediately, and let the client poll /api/job/<job_id> every few
+# seconds until the job is done.
+#
+# `jobs` is an in-memory dict {job_id: {status, game_url, error, ...}}.
+# Acceptable for a single-instance demo deployment. A multi-worker setup
+# would need Redis or similar.
+jobs: dict = {}
+jobs_lock = threading.Lock()
 
 
 def _normalize_obstacles(val: str) -> str:
@@ -211,14 +232,12 @@ def handle_user_text(user_message: str, session_id: str) -> dict:
     return finalize_structured_conversation(session_id)
 
 
-def finalize_structured_conversation(session_id: str) -> dict:
-    answers   = user_states[session_id]["answers"]
-    user_name = (answers.get("name") or "").strip()
-
-    logger.info("Finalizing game for session %s (user: %s)", session_id, user_name)
-
+def _run_generation_job(job_id: str, answers: dict, user_name: str) -> None:
+    """Background worker — runs the slow multi-agent pipeline and writes
+    the result back into the shared `jobs` dict. Never raises (errors are
+    caught and recorded so the polling client can show them)."""
+    logger.info("Job %s: starting generation (user: %s)", job_id, user_name)
     try:
-        # ── Multi-agent orchestrator ───────────────────────────────────────
         game_html = generate_game(answers)
 
         game_filename = f"game_{uuid.uuid4().hex[:6]}.html"
@@ -227,14 +246,64 @@ def finalize_structured_conversation(session_id: str) -> dict:
             f.write(game_html)
         game_url = f"/static/games/{game_filename}"
 
-        user_states[session_id]["current_question"] = "complete"
-        msg = f"Your game is ready{', ' + user_name if user_name else ''}! 🎮"
-        return {"message": msg, "type": "game_ready", "game_url": game_url, "options": []}
+        with jobs_lock:
+            jobs[job_id].update({
+                "status":   "done",
+                "game_url": game_url,
+                "finished_at": time.time(),
+            })
+        logger.info("Job %s: done — %s", job_id, game_url)
 
     except Exception as err:
-        logger.error("Game generation failed for session %s: %s", session_id, err)
-        msg = f"Sorry{', ' + user_name if user_name else ''}, the game generation failed. Please try again."
-        return {"message": msg, "type": "text", "options": []}
+        logger.error("Job %s: generation failed: %s", job_id, err)
+        with jobs_lock:
+            jobs[job_id].update({
+                "status": "error",
+                "error":  str(err),
+                "finished_at": time.time(),
+            })
+
+
+def finalize_structured_conversation(session_id: str) -> dict:
+    """Kick off game generation as a background job and return immediately.
+
+    The client gets a job_id and polls /api/job/<job_id> for status. We do
+    this because the synchronous generate_game() takes 2–4 minutes on free
+    Render — past the HTTP proxy timeout. See the `jobs` dict comment above.
+    """
+    answers   = user_states[session_id]["answers"]
+    user_name = (answers.get("name") or "").strip()
+    job_id    = uuid.uuid4().hex[:8]
+
+    with jobs_lock:
+        jobs[job_id] = {
+            "status":      "working",
+            "game_url":    None,
+            "error":       None,
+            "user_name":   user_name,
+            "started_at":  time.time(),
+            "finished_at": None,
+        }
+
+    # daemon=True so the thread doesn't block shutdown if the server is killed
+    threading.Thread(
+        target=_run_generation_job,
+        args=(job_id, answers, user_name),
+        daemon=True,
+        name=f"gen-{job_id}",
+    ).start()
+
+    user_states[session_id]["current_question"] = "complete"
+    logger.info("Job %s: queued for session %s (user: %s)", job_id, session_id, user_name)
+
+    msg = (f"Generating your game{', ' + user_name if user_name else ''}… "
+           f"this can take a few minutes.")
+    return {
+        "message": msg,
+        "type":    "job_started",
+        "job_id":  job_id,
+        "options": [],
+    }
 
 
 @app.route("/", methods=["GET"])
@@ -269,6 +338,8 @@ def chat():
                     "type": message.get("type"),
                     "options": message.get("options", []),
                     "game_url": message.get("game_url"),
+                    # Present when type == "job_started" — client polls /api/job/<id>
+                    "job_id":   message.get("job_id"),
                     "success": True,
                 }
             ), 200
@@ -278,6 +349,39 @@ def chat():
     except Exception as e:
         logger.error("Error processing request: %s", e)
         return jsonify({"error": f"Server error: {str(e)}", "success": False}), 500
+
+
+@app.route("/api/job/<job_id>", methods=["GET"])
+def job_status(job_id: str):
+    """Polled by the client every few seconds while a generation runs.
+
+    Response shape:
+      working: {success, status: "working"}
+      done:    {success, status: "done",  game_url, message}
+      error:   {success, status: "error", message}
+      404 if job_id is unknown (e.g. server restarted and forgot the job).
+    """
+    with jobs_lock:
+        job = jobs.get(job_id)
+        # Snapshot under the lock so we don't read while _run_generation_job
+        # is mid-update.
+        snap = dict(job) if job else None
+
+    if snap is None:
+        return jsonify({"success": False, "error": "Job not found"}), 404
+
+    resp = {"success": True, "status": snap["status"]}
+    user_name = snap.get("user_name") or ""
+
+    if snap["status"] == "done":
+        resp["game_url"] = snap["game_url"]
+        resp["message"]  = f"Your game is ready{', ' + user_name if user_name else ''}! 🎮"
+    elif snap["status"] == "error":
+        resp["error"]    = snap.get("error") or "unknown error"
+        resp["message"]  = (f"Sorry{', ' + user_name if user_name else ''}, "
+                            f"the game generation failed. Please try again.")
+    # status == "working" → just {success, status}, client keeps polling
+    return jsonify(resp), 200
 
 
 @app.route("/api/health", methods=["GET"])
