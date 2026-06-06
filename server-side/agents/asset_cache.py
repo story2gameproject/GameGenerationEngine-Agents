@@ -40,7 +40,7 @@ def _normalize(description: str) -> str:
 # cached sprites — e.g. a new rembg model, a new SDXL prompt style, a
 # negative-prompt tweak. Without this, cached pre-fix sprites get served
 # forever and users still see old artifacts.
-CACHE_VERSION = "v4-side-profile-landscape-obstacles"
+CACHE_VERSION = "v5-tight-bbox-strict-facing-single-subject"
 
 
 def cache_key(description: str, asset_type: str) -> str:

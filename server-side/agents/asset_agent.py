@@ -169,10 +169,16 @@ _STYLE_ANCHOR = (
     # photography, side-scroller game art) and reliably override the
     # top-down / isometric / aerial compositions SDXL otherwise picks
     # for vehicles and creatures.
+    #
+    # CRITICAL: "facing right" is strict — no "or facing camera" fallback,
+    # because the game flips the sprite when the player walks left and
+    # ASSUMES the source faces right. If SDXL drew the character facing
+    # left or facing the camera, the flip logic produces an inverted
+    # result ("press right → character faces left").
     "side profile shot, horizontal camera angle at eye level, "
     "ground-level perspective, lateral view, parallel to the camera, "
-    "subject facing right or facing camera, feet on the ground at the "
-    "bottom of the frame, "
+    "subject in strict profile facing right, nose pointing right, "
+    "feet on the ground at the bottom of the frame, "
     "no text, no watermark, no signature, no border, no frame, "
     "background must be plain solid white color #FFFFFF, "
     "uniform white fill, no shadow, no gradient, no scene, no environment, "
@@ -198,15 +204,20 @@ def _sprite_prompt(description: str, role: str) -> str:
             f"facing right, one individual person, {_STYLE_ANCHOR}"
         )
     if role == "obstacle":
-        # Extra-aggressive anti-lineup language. Avoid the word "portrait"
-        # here because the canvas is landscape — "portrait" was making
-        # SDXL try to compose vertical framings. Use "macro" / "close-up"
-        # / "filling the frame" instead.
+        # Extra-aggressive single-instance + anti-lineup language. SDXL
+        # has a strong training bias to draw vehicles in pairs/rows/showcase
+        # compositions, so we hammer "exactly 1" three different ways and
+        # explicitly forbid second instances. "macro framing" replaces
+        # "portrait" so the landscape canvas doesn't get a vertical
+        # composition.
         return (
-            f"a single large close-up illustration of exactly ONE {single}, "
-            f"one big {single} centered and filling the frame, alone, isolated, "
-            f"video game obstacle, just one subject, macro framing, "
-            f"no other {single}s anywhere in the image, {_STYLE_ANCHOR}"
+            f"exactly 1 (one) solitary {single}, ONLY ONE {single} in the entire frame, "
+            f"a single large close-up illustration of one isolated {single}, "
+            f"one big {single} centered and filling the frame, completely alone, "
+            f"video game obstacle, macro framing, "
+            f"absolutely no second {single} anywhere in the image, "
+            f"no other {single}s visible, "
+            f"{_STYLE_ANCHOR}"
         )
     if role == "target_rescue":
         return (
@@ -314,15 +325,24 @@ def _sdxl_sprite_image(description: str, role: str):
 
 def _remove_bg_local(pil_image):
     """Strip the background from a generated sprite, returning a PIL Image
-    with alpha and cropped to the visible bounding box.
+    with alpha and cropped TIGHT to the visible bounding box.
 
-    Two-tier strategy:
-      1. PRIMARY — spawn the rembg worker subprocess. High-quality
-         AI-based segmentation, works for any background SDXL produces.
-         Memory cost is paid only during the subprocess's lifetime.
-      2. FALLBACK — corner-sampling chroma-key in-process. Used only if
-         the subprocess crashes or times out.
+    Three steps:
+      1. AI background removal — rembg subprocess (primary) or
+         corner-sampling chroma-key (fallback if rembg crashes).
+      2. Alpha threshold — force low-alpha pixels to fully transparent.
+         This is CRITICAL: rembg leaves a halo of alpha 5-30 pixels
+         around the subject (invisible to the eye, but they expand
+         getbbox() by 10-30 pixels, which is exactly why obstacle and
+         target sprites looked like they were floating above the ground
+         line in the game).
+      3. Bbox crop — crop to the tight bounding box of visible content,
+         so the sprite fills its rendering frame instead of containing
+         transparent padding.
     """
+    import numpy as np
+    from PIL import Image as PILImage
+
     out = None
     try:
         out = _remove_bg_via_subprocess(pil_image)
@@ -331,7 +351,20 @@ def _remove_bg_local(pil_image):
         logger.warning("rembg subprocess failed (%s) — falling back to chroma-key", exc)
         out = _remove_bg_chroma_key(pil_image)
 
-    # Crop to non-transparent bbox so the sprite fills its frame
+    # Step 2: alpha-threshold cleanup. Anything < 30/255 alpha becomes
+    # fully transparent. The threshold is conservative — 30/255 is barely
+    # visible (~12% opacity), so we're not erasing anything a human would
+    # notice, but it eliminates the halo that was making sprites float.
+    arr = np.array(out)
+    if arr.ndim == 3 and arr.shape[-1] == 4:
+        weak = arr[..., 3] < 30
+        weak_count = int(weak.sum())
+        arr[..., 3][weak] = 0
+        if weak_count > 0:
+            logger.info("Alpha threshold: zeroed %d halo pixels", weak_count)
+        out = PILImage.fromarray(arr, mode="RGBA")
+
+    # Step 3: tight bbox crop
     bbox = out.getbbox()
     if bbox is None:
         return out
