@@ -199,9 +199,19 @@ def _sprite_prompt(description: str, role: str) -> str:
     """
     single = _singularize(description)
     if role == "hero":
+        # Motion + profile language. "Standing pose, facing right" was too
+        # weak — SDXL's hero/superhero training data is dominated by comic
+        # cover art (front-facing portraits, arms crossed) and it kept
+        # picking those compositions. "Running stride to the right, mid-
+        # action" forces a side-profile composition since you literally
+        # cannot draw a running stride front-on without it looking weird.
         return (
-            f"a single full-body character of {single}, alone, hero standing pose, "
-            f"facing right, one individual person, {_STYLE_ANCHOR}"
+            f"a single full-body character of {single}, alone, "
+            f"in strict side profile facing right, "
+            f"running stride to the right with one leg forward, "
+            f"mid-action dynamic pose, the character's head shown from "
+            f"the side facing right, body in lateral profile, "
+            f"one individual person, {_STYLE_ANCHOR}"
         )
     if role == "obstacle":
         # Extra-aggressive single-instance + anti-lineup language. SDXL
@@ -534,8 +544,27 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> str:
         if verdict["facing"] == "left":
             transparent = transparent.transpose(PILImage.FLIP_LEFT_RIGHT)
             logger.info("Sprite [%s] was facing left — auto-flipped to face right", role)
-            # The flip doesn't change the structural checks (subject, single,
-            # complete), so we keep the verdict's is_acceptable as-is.
+            # Update the verdict so the directional check below sees the
+            # post-flip orientation, not the original SDXL orientation.
+            verdict = {**verdict, "facing": "right"}
+
+        # For directional roles (hero, obstacle) profile facing is part of
+        # the quality bar — a front-facing Superman in a side-scroller
+        # never shows movement direction no matter what we do at render
+        # time. Reject non-profile outputs so we retry.
+        DIRECTIONAL_ROLES = ("hero", "obstacle")
+        wrong_facing = (
+            role in DIRECTIONAL_ROLES
+            and verdict["facing"] not in ("right", "left")
+        )
+        if wrong_facing:
+            verdict = {
+                **verdict,
+                "is_acceptable": False,
+                "issues": verdict["issues"] + [
+                    f"{role} not in side profile (facing={verdict['facing']})"
+                ],
+            }
 
         last_image   = transparent
         last_verdict = verdict
