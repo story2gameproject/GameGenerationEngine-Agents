@@ -12,14 +12,19 @@
 #   - Environment variables (ANTHROPIC_API_KEY, HF_TOKEN) are configured
 #     via the Space's "Variables and secrets" UI, not baked into the image.
 
-FROM python:3.11-slim
+# Pin to Debian Bookworm explicitly. The unsuffixed `python:3.11-slim` tag
+# recently switched to Debian Trixie, where the package `libgl1-mesa-glx`
+# was removed (replaced by plain `libgl1`). Pinning to bookworm keeps the
+# build deterministic across rebuilds.
+FROM python:3.11-slim-bookworm
 
 # ── System deps ──────────────────────────────────────────────────────────
-# rembg / onnxruntime need libgl1 + libglib2 at runtime for the model
-# loader. Pillow's wheels include their own libs, so nothing extra needed
-# for image I/O.
+# `libgl1` provides the OpenGL runtime that onnxruntime / rembg pull in
+# transitively. `libglib2.0-0` is needed by some Pillow + onnxruntime
+# combinations. Both packages exist with the same names on bookworm and
+# trixie, so this works regardless of future base-image shifts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1-mesa-glx \
+        libgl1 \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
