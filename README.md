@@ -2,7 +2,7 @@
 title: Storybased Game Maker
 emoji: 🎮
 colorFrom: blue
-colorTo: orange
+colorTo: yellow
 sdk: docker
 app_port: 7860
 pinned: false
