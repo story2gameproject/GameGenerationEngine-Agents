@@ -63,9 +63,14 @@ const TARGET_SMALL_W = 50;    // collectibles
 const TARGET_SMALL_H = 50;
 const TARGET_LARGE_W = 100;   // rescue-mission character at goal — match hero
 const TARGET_LARGE_H = 140;
-const GRAVITY     = 0.55;
-const JUMP_FORCE  = -13;
-const PLAYER_SPEED = 5;
+// Physics tuning: jumps used to feel floaty at GRAVITY=0.55 / JUMP_FORCE=-13
+// (hang time ~0.4 s, players felt unresponsive). Snappier numbers below
+// keep the same max jump height (~150 px, enough to clear our platforms)
+// but cut hang time roughly in half — feels much closer to a Mario-tempo
+// platformer.
+const GRAVITY     = 0.85;
+const JUMP_FORCE  = -16;
+const PLAYER_SPEED = 6;
 
 // ── Input ────────────────────────────────────────────────────
 const keys = {};
