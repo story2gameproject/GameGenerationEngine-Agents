@@ -43,9 +43,14 @@ WORKDIR /home/user/app
 COPY --chown=user:user requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Pre-download the u2netp rembg model (~5 MB). Without this, the first
-# sprite of the day stalls ~10-20 s while rembg fetches it from GitHub.
-RUN python -c "from rembg import new_session; new_session('u2netp'); print('u2netp pre-cached')"
+# Pre-download the rembg model. We use `isnet-general-use` (~170 MB)
+# rather than the lightweight `u2netp` (~5 MB) because isnet was trained
+# on general objects (vehicles, items, accessories) where u2netp is biased
+# toward humans/portraits. On Render's 512 MB tier we had to use u2netp;
+# on HF Spaces' 16 GB tier we can afford the better model, which makes
+# obstacle/target sprites segment as cleanly as the hero does.
+ENV REMBG_MODEL=isnet-general-use
+RUN python -c "from rembg import new_session; new_session('isnet-general-use'); print('isnet-general-use pre-cached')"
 
 # ── App code ─────────────────────────────────────────────────────────────
 COPY --chown=user:user . .

@@ -36,12 +36,24 @@ def _normalize(description: str) -> str:
     return d
 
 
+# Bump this whenever we make a change that should INVALIDATE previously
+# cached sprites — e.g. a new rembg model, a new SDXL prompt style, a
+# negative-prompt tweak. Without this, cached pre-fix sprites get served
+# forever and users still see old artifacts.
+CACHE_VERSION = "v2-isnet-anti-lineup"
+
+
 def cache_key(description: str, asset_type: str) -> str:
     """Stable 16-char hash for an (asset_type, description) pair.
     Different asset types (background vs hero vs obstacle) live in separate
-    keyspaces so 'a robot' as a hero never collides with 'a robot' as an obstacle."""
+    keyspaces so 'a robot' as a hero never collides with 'a robot' as an obstacle.
+
+    CACHE_VERSION participates in the hash, so bumping it invalidates every
+    sprite cached before the bump — necessary when the underlying model or
+    prompts change in a way that would re-segment / re-render the same input.
+    """
     norm = _normalize(description)
-    raw  = f"{asset_type}|{norm}"
+    raw  = f"{CACHE_VERSION}|{asset_type}|{norm}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 
 

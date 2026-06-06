@@ -167,10 +167,15 @@ _STYLE_ANCHOR = (
 
 def _sprite_prompt(description: str, role: str) -> str:
     """Build a focused prompt asking SDXL for a SINGLE-SUBJECT image.
+
     Words like 'sprite' and 'sheet' are avoided because some image
     providers (e.g. nscale via HF router) interpret them as 'sprite sheet'
-    and produce grids of multiple poses. We say 'illustration' / 'figure'
-    instead and let the background-removal step give us transparency."""
+    and produce grids of multiple poses. For obstacles in particular
+    (cars, vehicles, items) SDXL's training data is full of catalog/
+    showcase compositions ("here are 5 taxis", "lineup of cars"), so we
+    push HARD on close-up + single + centered + macro framing language to
+    override that bias.
+    """
     single = _singularize(description)
     if role == "hero":
         return (
@@ -178,9 +183,15 @@ def _sprite_prompt(description: str, role: str) -> str:
             f"facing right, one individual person, {_STYLE_ANCHOR}"
         )
     if role == "obstacle":
+        # Extra-aggressive anti-lineup language. The phrases 'close-up',
+        # 'large centered', 'single subject filling frame' are the words
+        # SDXL associates with portrait/macro compositions instead of
+        # catalog rows.
         return (
-            f"a single full-body illustration of one {single}, alone, isolated, "
-            f"video game enemy, just one, {_STYLE_ANCHOR}"
+            f"a single large close-up illustration of exactly ONE {single}, "
+            f"one big {single} centered and filling the frame, alone, isolated, "
+            f"video game obstacle, just one subject, single object portrait, "
+            f"no other {single}s anywhere in the image, {_STYLE_ANCHOR}"
         )
     if role == "target_rescue":
         return (
@@ -189,8 +200,8 @@ def _sprite_prompt(description: str, role: str) -> str:
         )
     # target_item — a collectible object
     return (
-        f"a single illustration of one {single}, alone, isolated game collectible, "
-        f"{_STYLE_ANCHOR}"
+        f"a single large close-up of one {single}, alone, isolated game collectible, "
+        f"one {single} centered and filling the frame, {_STYLE_ANCHOR}"
     )
 
 
@@ -207,6 +218,15 @@ def _sdxl_sprite_image(description: str, role: str):
         "sprite sheet, sprite grid, character sheet, multiple poses, "
         "character variations, model sheet, pose chart, thumbnail grid, "
         "side-by-side, collage, comic panels, "
+        # Vehicle/object catalog compositions — the specific failure mode
+        # we hit with obstacle sprites ("yellow taxis" became 3 stacked
+        # variants per sprite). These phrases bias SDXL toward portrait
+        # framing instead of catalog/showcase rows.
+        "vehicle lineup, car lineup, row of cars, row of vehicles, "
+        "rows of objects, stacked vehicles, stacked cars, vehicle gallery, "
+        "vehicle collection, car catalog, product catalog, "
+        "color variants, vehicle variations, model variations, "
+        "two cars, three cars, multiple vehicles, vehicle row, "
         # And the usual single-subject hygiene
         "text, watermark, signature, logo, multiple characters, group, crowd, "
         "duplicates, two people, three people, multiple instances, copies, "
