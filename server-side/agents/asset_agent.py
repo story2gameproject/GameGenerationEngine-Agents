@@ -258,9 +258,13 @@ def _sdxl_dimensions(role: str) -> tuple[int, int]:
       - Target items (collectibles): square (768x768). Items are usually
         centered icons; either aspect ratio works.
     """
-    if role == "obstacle":
-        return (1024, 768)
-    if role in ("hero", "target_rescue"):
+    # Heroes, rescue targets, AND obstacles all render best in portrait
+    # canvas (single-subject framing). Landscape was tried earlier to
+    # discourage top-down vehicle views, but in practice it encouraged
+    # SDXL to fill the wide canvas with multi-subject catalogs ("10+
+    # guard variations in one image"). Portrait keeps the composition
+    # forced toward a single subject.
+    if role in ("hero", "target_rescue", "obstacle"):
         return (768, 1024)
     return (768, 768)
 
@@ -561,7 +565,14 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> tuple[str, d
     last_image = None
     last_verdict = None
 
-    DIRECTIONAL_ROLES = ("hero", "obstacle")
+    # Only the HERO is required to be in side profile — the player walks
+    # left/right and benefits from a directional sprite. Obstacles are
+    # passive; rejecting forward-facing guards just causes SDXL to
+    # escalate to multi-subject sprite-sheet outputs. We accept whatever
+    # facing the verifier reports for obstacles and rely on the
+    # 'directional' flag in cache metadata to tell the game engine
+    # whether to flip on left-walk.
+    DIRECTIONAL_ROLES = ("hero",)
 
     for attempt in range(1, MAX_TRIES + 1):
         try:

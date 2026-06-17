@@ -181,10 +181,15 @@ def _claude_verify_sprite(pil_image, expected_subject: str, role: str) -> dict:
         f"If they said only \"princess\" with no extra attributes, any princess passes. "
         f"Set to false ONLY if a clearly-named attribute is obviously missing or contradicted "
         f"(e.g., user said \"red dragon\" but the image is plainly green).\n\n"
-        f"For \"facing\": if the subject is in side profile, say \"right\" or \"left\".\n"
-        f"If the subject faces the camera, say \"forward\". If turned away, \"backward\".\n"
-        f"For vehicles, \"facing\" is where the FRONT of the vehicle points.\n"
-        f"For non-directional objects (coin, mushroom, gem, flag) use \"unclear\"."
+        f"For \"facing\" — this is the most error-prone field, so follow these rules STRICTLY:\n"
+        f" - Look at the HEAD/FACE specifically, not the overall body angle.\n"
+        f" - 'right' = strict side profile, ONE ear visible on the left side of the head, nose pointing to the right edge of the image.\n"
+        f" - 'left'  = strict side profile, ONE ear visible on the right side of the head, nose pointing to the left edge of the image.\n"
+        f" - 'forward' = facing the camera, BOTH ears (or both eyes) visible, nose pointing toward the viewer. If you see two symmetric eyes, it's forward, not profile.\n"
+        f" - 'backward' = turned away from camera, back of head visible.\n"
+        f" - 'unclear' = if you're not highly confident, prefer this over guessing. 3/4 views (slightly turned) are 'unclear', NOT 'right'/'left'.\n"
+        f"For vehicles, 'facing' is where the FRONT of the vehicle points (where the headlights are).\n"
+        f"For non-directional objects (coin, mushroom, gem, flag) use 'unclear'."
     )
 
     client = anthropic.Anthropic(api_key=api_key)
