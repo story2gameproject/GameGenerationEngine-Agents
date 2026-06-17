@@ -87,25 +87,28 @@ def _build_level(cfg: dict) -> dict:
         # The activation_delay_ms field tells the template to hold the
         # enemy in place for the first couple seconds — giving the player
         # time to start running. After that, it chases rightward forever.
+        #
+        # IMPORTANT: in escape mode we ALWAYS use ground motion (even for
+        # thematically flying enemies like dragons). A flying pursuer
+        # hovering at y=280 sails OVER a ground-level player at y=320+
+        # without their hitboxes ever overlapping, making the chase
+        # unwinnable in reverse — the player simply walks under the
+        # enemy. Ground motion guarantees collision works.
+        #
+        # We also scale the pursuer up to 1.5× the normal obstacle size
+        # so it reads as IMPOSING — a dragon, a giant, a monster. Without
+        # this, a "dragon" rendered at OBSTACLE_W=80 looks like a small
+        # flying imp, not the threat the escape narrative implies.
         pursuer_speed = round(espeed * 1.5 + rng.uniform(-0.2, 0.2), 1)
         pursuer = {
-            "x": 20,             # player spawns at x=80; pursuer is just behind
-            "patrol_range": 0,
-            "speed": pursuer_speed,
+            "x":  20,            # player spawns at x=80; pursuer is just behind
+            "y":  GROUND_Y,
+            "patrol_range":       0,
+            "speed":              pursuer_speed,
             "activation_delay_ms": 2200,   # ~2.2 second head start
+            "motion":             "ground",
+            "scale":              1.5,     # 1.5× width and height
         }
-        if motion_type == "flying":
-            pursuer.update({
-                "y": 280,
-                "motion": "flying",
-                "bob_amplitude": 35,
-                "bob_speed": 0.03,
-            })
-        else:
-            pursuer.update({
-                "y": GROUND_Y,
-                "motion": "ground",
-            })
         enemies.append(pursuer)
     else:
         # ── Normal modes: spread enemies across the level ─────────────────

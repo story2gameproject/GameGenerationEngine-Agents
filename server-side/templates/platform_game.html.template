@@ -513,13 +513,19 @@ function updateEnemies() {
 
 function drawEnemies() {
   level.enemies.forEach(e => {
+    // Per-enemy scale (defaults to 1). Used by escape-mode pursuers to
+    // render 1.5× normal size so a dragon/giant/monster reads as
+    // imposing instead of like a regular ground guard.
+    const scale = e.scale || 1;
+    const ew = OBSTACLE_W * scale;
+    const eh = OBSTACLE_H * scale;
     const sx = e.x - cameraX;
-    if (sx + OBSTACLE_W < 0 || sx > W) return;
+    if (sx + ew < 0 || sx > W) return;
     // Enemy walks left = mirror sprite — but only if the obstacle sprite
     // is actually in side profile. For forward/back/unclear sprites we
     // never flip; flipping a front-on guard looks wrong.
     const flip = OBSTACLE_DIRECTIONAL && e.dir > 0;
-    drawSpriteImage(SPRITES.obstacle, sx, e.y - OBSTACLE_H, OBSTACLE_W, OBSTACLE_H, flip);
+    drawSpriteImage(SPRITES.obstacle, sx, e.y - eh, ew, eh, flip);
   });
 }
 
@@ -603,9 +609,15 @@ function checkCollisions() {
   const ENEMY_HIT_H_RATIO = 0.80;
 
   level.enemies.forEach(e => {
-    const ehitW = OBSTACLE_W * ENEMY_HIT_W_RATIO;
-    const ehitH = OBSTACLE_H * ENEMY_HIT_H_RATIO;
-    const ehitX = e.x + (OBSTACLE_W - ehitW) / 2;
+    // Per-enemy scale (defaults to 1) — used by escape-mode pursuers.
+    // The hitbox scales with the visual so a bigger dragon actually has
+    // a bigger collision area, matching what the player sees.
+    const scale = e.scale || 1;
+    const eVisW = OBSTACLE_W * scale;
+    const eVisH = OBSTACLE_H * scale;
+    const ehitW = eVisW * ENEMY_HIT_W_RATIO;
+    const ehitH = eVisH * ENEMY_HIT_H_RATIO;
+    const ehitX = e.x + (eVisW - ehitW) / 2;
     const ehitY = e.y - ehitH;  // anchor to bottom (feet of enemy)
     if (
       HERO_HIT_X < ehitX + ehitW && HERO_HIT_X + HERO_HIT_W > ehitX &&
