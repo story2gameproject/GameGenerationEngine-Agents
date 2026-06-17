@@ -51,15 +51,29 @@ def _build_level(cfg: dict) -> dict:
     hvar    = cfg["height_variance"]
 
     # ── Platforms ──────────────────────────────────────────────────────────
+    # Place platforms left-to-right until we run out of horizontal room.
+    #
+    # Bug fixed here: the previous loop clamped x to LEVEL_WIDTH - 500
+    # but kept iterating, which made every overflow platform land at
+    # the SAME x with only y varying — producing a visible vertical
+    # stack of platforms at the right edge of the level. Now we break
+    # out of the loop instead, ending up with fewer platforms than the
+    # config requested (acceptable trade-off vs visible stacking).
     platforms = []
     x = 350
+    placed = 0
     for i in range(pc):
         w = rng.randint(90, 160)
+        if x + w > LEVEL_WIDTH - 500:
+            break  # next platform wouldn't fit cleanly — stop placing
         y = GROUND_Y - 80 - rng.randint(0, hvar)
-        y = max(180, min(y, GROUND_Y - 80))   # clamp
+        y = max(180, min(y, GROUND_Y - 80))   # clamp y to play area
         platforms.append({"x": x, "y": y, "width": w, "height": PLATFORM_H})
+        placed += 1
         x += w + gap + rng.randint(-30, 30)
-        x = min(x, LEVEL_WIDTH - 500)
+    if placed < pc:
+        logger.info("Level: placed %d/%d platforms (level width %d limited the rest)",
+                    placed, pc, LEVEL_WIDTH)
 
     # ── Enemies — placement varies by motion type AND goal type ───────────
     motion_type = cfg.get("motion_type", "ground")

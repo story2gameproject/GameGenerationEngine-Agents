@@ -608,6 +608,17 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> tuple[str, d
                 ],
             }
 
+        # Reject backward-facing rescue targets: when the player reaches
+        # the rescue point we want them to SEE the rescued character's
+        # face, not the back of her head. Profile (left/right), forward,
+        # and unclear are all acceptable — only "backward" is rejected.
+        if role == "target_rescue" and verdict["facing"] == "backward":
+            verdict = {
+                **verdict,
+                "is_acceptable": False,
+                "issues": verdict["issues"] + ["rescue target facing away from camera"],
+            }
+
         last_image   = transparent
         last_verdict = verdict
 
