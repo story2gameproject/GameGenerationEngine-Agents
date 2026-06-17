@@ -168,12 +168,19 @@ def _claude_verify_sprite(pil_image, expected_subject: str, role: str) -> dict:
         f"The background has been removed — the subject sits on a transparent canvas.\n\n"
         f"Respond with ONLY a JSON object (no preamble, no markdown fences):\n"
         f"{{\n"
-        f'  "is_subject":  true|false,   // recognizable as a "{expected_subject}"\n'
-        f'  "is_single":   true|false,   // exactly ONE subject, no duplicates/lineups\n'
-        f'  "is_complete": true|false,   // full subject visible, not cropped at edges\n'
-        f'  "facing":      "right"|"left"|"forward"|"backward"|"unclear",\n'
-        f'  "notes":       "one short sentence on any quality issue, or empty"\n'
+        f'  "is_subject":     true|false,   // recognizable as a "{expected_subject}"\n'
+        f'  "is_single":      true|false,   // exactly ONE subject, no duplicates/lineups\n'
+        f'  "is_complete":    true|false,   // full subject visible, not cropped at edges\n'
+        f'  "semantic_match": true|false,   // image visually contains the key attributes in "{expected_subject}"\n'
+        f'  "facing":         "right"|"left"|"forward"|"backward"|"unclear",\n'
+        f'  "notes":          "one short sentence on any quality issue, or empty"\n'
         f"}}\n\n"
+        f"For \"semantic_match\": be PRACTICAL, not pedantic. The user wrote \"{expected_subject}\". "
+        f"Does the image visually capture the SPECIFIC attributes they named? "
+        f"E.g., if they said \"blonde princess in pink dress\", look for: princess + blonde hair + pink dress. "
+        f"If they said only \"princess\" with no extra attributes, any princess passes. "
+        f"Set to false ONLY if a clearly-named attribute is obviously missing or contradicted "
+        f"(e.g., user said \"red dragon\" but the image is plainly green).\n\n"
         f"For \"facing\": if the subject is in side profile, say \"right\" or \"left\".\n"
         f"If the subject faces the camera, say \"forward\". If turned away, \"backward\".\n"
         f"For vehicles, \"facing\" is where the FRONT of the vehicle points.\n"
@@ -207,10 +214,15 @@ def _claude_verify_sprite(pil_image, expected_subject: str, role: str) -> dict:
 
     parsed = json.loads(raw)
 
+    # semantic_match defaults to True for backward compat / when Claude omits
+    # the field entirely (older response shape).
+    semantic_match = parsed.get("semantic_match", True)
+
     is_acceptable = bool(
         parsed.get("is_subject")
         and parsed.get("is_single")
         and parsed.get("is_complete")
+        and semantic_match
     )
 
     issues = []
@@ -220,6 +232,8 @@ def _claude_verify_sprite(pil_image, expected_subject: str, role: str) -> dict:
         issues.append("multiple subjects in one sprite")
     if not parsed.get("is_complete"):
         issues.append("subject cropped or incomplete")
+    if not semantic_match:
+        issues.append(f"visual content does not match description \"{expected_subject}\"")
     notes = (parsed.get("notes") or "").strip()
     if notes:
         issues.append(notes)

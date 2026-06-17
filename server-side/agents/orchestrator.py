@@ -138,6 +138,12 @@ def inject_into_template(game_params: dict, assets: dict, level_data: dict, bg_u
         HERO_IMG_URL         = _js(assets["hero_image_url"]),
         OBSTACLE_IMG_URL     = _js(assets["obstacle_image_url"]),
         TARGET_IMG_URL       = _js(assets["target_image_url"]),
+        # Directional flags — true means "flip the sprite on left-walk"
+        # (i.e., it's in side profile). False for forward/back/unclear
+        # sprites where flipping would look wrong; the game renders those
+        # without flipping. Default True for backward compatibility.
+        HERO_DIRECTIONAL     = _js(bool(assets.get("hero_directional", True))),
+        OBSTACLE_DIRECTIONAL = _js(bool(assets.get("obstacle_directional", True))),
         SKY_COLOR            = _js(assets["sky_color"]),
         GROUND_COLOR         = _js(assets["ground_color"]),
         PLATFORM_COLOR       = _js(assets["platform_color"]),

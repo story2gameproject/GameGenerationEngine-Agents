@@ -361,17 +361,36 @@ def _remove_bg_local(pil_image):
         logger.warning("rembg subprocess failed (%s) — falling back to chroma-key", exc)
         out = _remove_bg_chroma_key(pil_image)
 
-    # Step 2: alpha-threshold cleanup. Anything < 30/255 alpha becomes
-    # fully transparent. The threshold is conservative — 30/255 is barely
-    # visible (~12% opacity), so we're not erasing anything a human would
+    # Step 2: alpha-threshold cleanup. Anything < 50/255 alpha becomes
+    # fully transparent. The threshold is conservative — 50/255 is barely
+    # visible (~20% opacity), so we're not erasing anything a human would
     # notice, but it eliminates the halo that was making sprites float.
+    # (Previously 30 — bumped to 50 because some rembg outputs left a
+    # denser halo than 30 and obstacles were still floating.)
     arr = np.array(out)
     if arr.ndim == 3 and arr.shape[-1] == 4:
-        weak = arr[..., 3] < 30
+        weak = arr[..., 3] < 50
         weak_count = int(weak.sum())
         arr[..., 3][weak] = 0
         if weak_count > 0:
             logger.info("Alpha threshold: zeroed %d halo pixels", weak_count)
+
+        # Step 2b: force ground anchor. Walk from the bottom up; trim any
+        # row that has fewer than 3 opaque pixels (a stray dust trail rembg
+        # sometimes leaves). This guarantees the bbox bottom is REAL sprite
+        # content, so the obstacle/hero feet sit flush on the ground line
+        # in the game instead of floating above it.
+        h, w = arr.shape[:2]
+        opaque_per_row = (arr[..., 3] > 0).sum(axis=1)
+        new_bottom = h
+        for y in range(h - 1, -1, -1):
+            if opaque_per_row[y] >= 3:
+                new_bottom = y + 1
+                break
+        if new_bottom < h:
+            arr[new_bottom:, :, 3] = 0
+            logger.info("Ground anchor: trimmed %d sparse bottom rows", h - new_bottom)
+
         out = PILImage.fromarray(arr, mode="RGBA")
 
     # Step 3: tight bbox crop
@@ -495,22 +514,34 @@ def _remove_bg_chroma_key(pil_image):
     return PILImage.fromarray(arr.astype(np.uint8), mode="RGBA")
 
 
-def _ai_one_sprite(description: str, asset_type: str, role: str) -> str:
-    """Generate one transparent-PNG sprite. Returns its public URL.
+def _ai_one_sprite(description: str, asset_type: str, role: str) -> tuple[str, dict]:
+    """Generate one transparent-PNG sprite.
+
+    Returns: (public_url, metadata_dict). Metadata holds the verifier's
+    facing verdict so the game engine can decide whether to flip the
+    sprite on left-walk. New: the result is a TUPLE (changed from a plain
+    URL string) so callers must unpack — see _ai_sprite_urls().
 
     Cache-aware: identical (description, role) pairs reuse the same file
-    across games.
+    and metadata across games.
 
     Quality-controlled: each generated sprite is verified by Claude Vision
     before caching:
       - If the verdict is GOOD → cache as-is.
-      - If the subject is facing LEFT → flip horizontally (cheap fix —
-        no need to regenerate, the visual content is fine, just mirror it
-        so the game's flip logic plays it back correctly).
+      - If the subject is facing LEFT → flip horizontally so the cached
+        file faces right (matching the game engine's flip-on-walk-left
+        convention).
       - If the sprite has structural issues (wrong subject, multiple
-        subjects, incomplete crop) → regenerate, up to MAX_TRIES.
-      - If we exhaust retries → save the last attempt rather than failing
-        the whole game (better something than nothing).
+        subjects, incomplete crop, doesn't match the description's named
+        attributes) → regenerate.
+      - If a directional role (hero/obstacle) lands "forward"/"backward"/
+        "unclear", regenerate — but if we exhaust retries we ACCEPT the
+        non-profile sprite and mark it 'directional=False' so the game
+        engine renders it without flipping. Better a static-looking hero
+        than a hero who visibly faces the wrong way.
+
+    Retries: 5 attempts for the hero (profile is hardest for SDXL), 3 for
+    everything else.
     """
     from PIL import Image as PILImage
     # server-side/ is on sys.path (added by web_server_v2.py), so image_vision
@@ -519,13 +550,18 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> str:
     import image_vision
 
     cache_desc = f"{description} | role:{role}"
-    hit = asset_cache.lookup(cache_desc, asset_type)
-    if hit:
-        return hit
+    hit_url, hit_meta = asset_cache.lookup_with_meta(cache_desc, asset_type)
+    if hit_url:
+        return hit_url, hit_meta
 
-    MAX_TRIES = 3
+    # Per-role retry budget: hero is the tightest case (must be in profile,
+    # SDXL heavily biased to portrait/front-facing hero compositions), so
+    # give it more chances.
+    MAX_TRIES = 5 if role == "hero" else 3
     last_image = None
     last_verdict = None
+
+    DIRECTIONAL_ROLES = ("hero", "obstacle")
 
     for attempt in range(1, MAX_TRIES + 1):
         try:
@@ -538,21 +574,16 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> str:
 
         verdict = image_vision.verify_sprite(transparent, description, role)
 
-        # Auto-flip cheap fix: subject is facing the wrong way but is
-        # otherwise fine. Flip the pixels so the cached file faces right
-        # (which is what the game's mirror-on-left-walk logic assumes).
+        # Auto-flip cheap fix: subject is facing the wrong way but otherwise
+        # fine. Mirror the pixels so the cached file faces right.
         if verdict["facing"] == "left":
             transparent = transparent.transpose(PILImage.FLIP_LEFT_RIGHT)
             logger.info("Sprite [%s] was facing left — auto-flipped to face right", role)
-            # Update the verdict so the directional check below sees the
-            # post-flip orientation, not the original SDXL orientation.
             verdict = {**verdict, "facing": "right"}
 
-        # For directional roles (hero, obstacle) profile facing is part of
-        # the quality bar — a front-facing Superman in a side-scroller
-        # never shows movement direction no matter what we do at render
-        # time. Reject non-profile outputs so we retry.
-        DIRECTIONAL_ROLES = ("hero", "obstacle")
+        # For directional roles, profile facing is part of the quality bar.
+        # Reject non-profile so we retry — but track it so we can still
+        # render a non-flipping sprite if all retries fail.
         wrong_facing = (
             role in DIRECTIONAL_ROLES
             and verdict["facing"] not in ("right", "left")
@@ -571,30 +602,50 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> str:
 
         if verdict["is_acceptable"]:
             logger.info("Sprite [%s] accepted on attempt %d/%d", role, attempt, MAX_TRIES)
-            return asset_cache.save(cache_desc, asset_type, transparent)
+            metadata = {
+                "facing":      verdict["facing"],
+                "directional": verdict["facing"] in ("right", "left"),
+            }
+            url = asset_cache.save(cache_desc, asset_type, transparent, metadata)
+            return url, metadata
 
         logger.warning("Sprite [%s] rejected on attempt %d/%d — issues: %s",
                        role, attempt, MAX_TRIES, verdict["issues"])
 
-    # All retries exhausted. Save the best-effort last attempt rather than
-    # crashing the game generation — the user gets SOMETHING instead of an
-    # error, and the SVG fallback at the outer layer can still cover the
-    # case where every attempt actually crashed.
+    # All retries exhausted. Save the best-effort last attempt with
+    # metadata flagging it as non-directional. The game engine will skip
+    # the flip-on-walk-left for this sprite, so a forward-facing hero
+    # still looks the same (slightly less expressive) but never visibly
+    # WRONG-facing.
     if last_image is not None:
+        last_facing = (last_verdict or {}).get("facing", "unclear")
+        directional = last_facing in ("right", "left")
         logger.warning(
-            "Sprite [%s] using best-effort last attempt (verification never passed: %s)",
-            role, (last_verdict or {}).get("issues"),
+            "Sprite [%s] using best-effort last attempt "
+            "(facing=%s, directional=%s, issues=%s)",
+            role, last_facing, directional,
+            (last_verdict or {}).get("issues"),
         )
-        return asset_cache.save(cache_desc, asset_type, last_image)
+        metadata = {"facing": last_facing, "directional": directional}
+        url = asset_cache.save(cache_desc, asset_type, last_image, metadata)
+        return url, metadata
 
     raise RuntimeError(f"All {MAX_TRIES} attempts to generate {role} sprite failed")
 
 
 def _ai_sprite_urls(game_params: dict) -> dict:
     """Generate hero/obstacle/target sprites in parallel.
+
     Each sprite has its own try/except — one failure doesn't kill the others.
     Failed sprites get the library SVG fallback for that slot.
-    Returns a dict with all three URLs guaranteed populated.
+
+    Returns a dict with all URLs and per-sprite directionality flags:
+      hero_image_url, hero_directional,
+      obstacle_image_url, obstacle_directional,
+      target_image_url, target_directional
+    The 'directional' booleans tell the game engine whether to flip the
+    sprite on left-walk (True) or render it without flipping (False, for
+    front/back/unclear-facing sprites where flipping looks wrong).
     """
     raw       = game_params.get("_raw_answers", {})
     goal_type = (game_params.get("goal_type") or "").lower().replace(" ", "_")
@@ -606,12 +657,15 @@ def _ai_sprite_urls(game_params: dict) -> dict:
     target_role   = "target_rescue" if is_rescue else "target_item"
 
     # Each task runs independently; failures are isolated per sprite.
+    # Returns (url, meta_dict) — meta has 'directional' flag.
     def safe_one(desc, asset_type, role, svg_fallback, fallback_label):
         try:
             return _ai_one_sprite(desc, asset_type, role)
         except Exception as e:
             logger.warning("AI sprite for %s failed (%s) — using SVG fallback", asset_type, e)
-            return _svg_string_to_url(svg_fallback, fallback_label, asset_type)
+            url = _svg_string_to_url(svg_fallback, fallback_label, asset_type)
+            # SVG fallbacks are hand-drawn facing right — treat as directional.
+            return url, {"directional": True, "facing": "right"}
 
     target_fallback_svg   = _DEFAULT_RESCUE_TARGET_SVG if is_rescue else _DEFAULT_TARGET_SVG
     target_fallback_label = f"library-target-{'rescue' if is_rescue else 'item'}"
@@ -620,10 +674,18 @@ def _ai_sprite_urls(game_params: dict) -> dict:
         hf = pool.submit(safe_one, hero_desc,     "hero",     "hero",        _DEFAULT_HERO_SVG,     "library-hero")
         of = pool.submit(safe_one, obstacle_desc, "obstacle", "obstacle",    _DEFAULT_OBSTACLE_SVG, "library-obstacle")
         tf = pool.submit(safe_one, target_desc,   "target",   target_role,   target_fallback_svg,   target_fallback_label)
+
+        hero_url, hero_meta         = hf.result(timeout=240)
+        obstacle_url, obstacle_meta = of.result(timeout=240)
+        target_url, target_meta     = tf.result(timeout=240)
+
         return {
-            "hero_image_url":     hf.result(timeout=240),
-            "obstacle_image_url": of.result(timeout=240),
-            "target_image_url":   tf.result(timeout=240),
+            "hero_image_url":       hero_url,
+            "hero_directional":     bool(hero_meta.get("directional", True)),
+            "obstacle_image_url":   obstacle_url,
+            "obstacle_directional": bool(obstacle_meta.get("directional", True)),
+            "target_image_url":     target_url,
+            "target_directional":   bool(target_meta.get("directional", True)),
         }
 
 # ---------------------------------------------------------------------------
@@ -649,14 +711,22 @@ def _svg_string_to_url(svg_string: str, cache_desc: str, asset_type: str) -> str
 
 
 def _library_sprite_urls(game_params: dict) -> dict:
-    """Final fallback: pick a built-in SVG per role and save as .svg in cache."""
+    """Final fallback: pick a built-in SVG per role and save as .svg in cache.
+
+    SVG library sprites are hand-drawn in right-facing profile, so they
+    are always directional. Returns the same shape as _ai_sprite_urls()
+    so the orchestrator doesn't need to special-case the fallback path.
+    """
     goal_type = (game_params.get("goal_type") or "").lower().replace(" ", "_")
     is_rescue = goal_type in ("rescue_mission", "escape")
     target_svg = _DEFAULT_RESCUE_TARGET_SVG if is_rescue else _DEFAULT_TARGET_SVG
     return {
-        "hero_image_url":     _svg_string_to_url(_DEFAULT_HERO_SVG,     "library-hero",     "hero"),
-        "obstacle_image_url": _svg_string_to_url(_DEFAULT_OBSTACLE_SVG, "library-obstacle", "obstacle"),
-        "target_image_url":   _svg_string_to_url(target_svg,            f"library-target-{('rescue' if is_rescue else 'item')}", "target"),
+        "hero_image_url":       _svg_string_to_url(_DEFAULT_HERO_SVG,     "library-hero",     "hero"),
+        "hero_directional":     True,
+        "obstacle_image_url":   _svg_string_to_url(_DEFAULT_OBSTACLE_SVG, "library-obstacle", "obstacle"),
+        "obstacle_directional": True,
+        "target_image_url":     _svg_string_to_url(target_svg, f"library-target-{('rescue' if is_rescue else 'item')}", "target"),
+        "target_directional":   True,
     }
 
 # ---------------------------------------------------------------------------

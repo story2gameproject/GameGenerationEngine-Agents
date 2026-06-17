@@ -27,6 +27,13 @@ const WIN_MESSAGE        = $WIN_MESSAGE;
 const TARGET_NAME        = $TARGET_NAME;
 const HERO_IMG_URL       = $HERO_IMG_URL;
 const OBSTACLE_IMG_URL   = $OBSTACLE_IMG_URL;
+// Directional flags: true → sprite is in side profile facing right;
+// flip it horizontally when the entity walks left. false → the sprite
+// is forward/back-facing or unclear (e.g., SDXL gave us a front-on
+// portrait the verifier accepted as a last resort). For non-directional
+// sprites we never flip — flipping a front-on hero looks wrong.
+const HERO_DIRECTIONAL     = $HERO_DIRECTIONAL;
+const OBSTACLE_DIRECTIONAL = $OBSTACLE_DIRECTIONAL;
 const TARGET_IMG_URL     = $TARGET_IMG_URL;
 const SKY_COLOR          = $SKY_COLOR;
 const GROUND_COLOR       = $GROUND_COLOR;
@@ -508,8 +515,11 @@ function drawEnemies() {
   level.enemies.forEach(e => {
     const sx = e.x - cameraX;
     if (sx + OBSTACLE_W < 0 || sx > W) return;
-    // Enemy walks left = mirror sprite
-    drawSpriteImage(SPRITES.obstacle, sx, e.y - OBSTACLE_H, OBSTACLE_W, OBSTACLE_H, e.dir > 0);
+    // Enemy walks left = mirror sprite — but only if the obstacle sprite
+    // is actually in side profile. For forward/back/unclear sprites we
+    // never flip; flipping a front-on guard looks wrong.
+    const flip = OBSTACLE_DIRECTIONAL && e.dir > 0;
+    drawSpriteImage(SPRITES.obstacle, sx, e.y - OBSTACLE_H, OBSTACLE_W, OBSTACLE_H, flip);
   });
 }
 
@@ -738,7 +748,11 @@ function drawPlayer() {
   // Visual is slightly bigger than hitbox — centre horizontally, anchor feet
   const visX = (player.x - cameraX) - (HERO_W - player.w) / 2;
   const visY = player.y - (HERO_H - player.h);
-  drawSpriteImage(SPRITES.hero, visX, visY, HERO_W, HERO_H, playerFacing < 0);
+  // Only flip the hero on left-walk if the sprite is in side profile.
+  // For forward/back-facing heroes (SDXL fallback when profile retries
+  // exhaust), flipping would visibly look wrong; render static instead.
+  const flip = HERO_DIRECTIONAL && playerFacing < 0;
+  drawSpriteImage(SPRITES.hero, visX, visY, HERO_W, HERO_H, flip);
 }
 
 // ── Main loop ────────────────────────────────────────────────
