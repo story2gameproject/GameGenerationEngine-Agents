@@ -202,18 +202,23 @@ def _sprite_prompt(description: str, role: str) -> str:
     """
     single = _singularize(description)
     if role == "hero":
-        # Motion + profile language. "Standing pose, facing right" was too
-        # weak — SDXL's hero/superhero training data is dominated by comic
-        # cover art (front-facing portraits, arms crossed) and it kept
-        # picking those compositions. "Running stride to the right, mid-
-        # action" forces a side-profile composition since you literally
-        # cannot draw a running stride front-on without it looking weird.
+        # Motion + profile language with explicit anti-"looking back" rules.
+        # SDXL's escape/action art is full of "running while looking back
+        # over the shoulder" poses (head turned 180° from the body's motion
+        # direction). Those look bizarre in a side-scroller — the player
+        # appears to face the OPPOSITE way they're walking. The phrasing
+        # below forbids the over-shoulder look explicitly: head AND body
+        # in the same direction, eyes looking where the feet are going.
         return (
             f"a single full-body character of {single}, alone, "
             f"in strict side profile facing right, "
             f"running stride to the right with one leg forward, "
-            f"mid-action dynamic pose, the character's head shown from "
-            f"the side facing right, body in lateral profile, "
+            f"mid-action dynamic pose, "
+            f"the character's HEAD looks in the SAME direction as their body, "
+            f"face and nose pointing to the right edge of the image, "
+            f"eyes looking forward in the direction of motion, "
+            f"NOT looking back, NOT looking over the shoulder, "
+            f"body in lateral profile, "
             f"one individual person, {_STYLE_ANCHOR}"
         )
     if role == "obstacle":
