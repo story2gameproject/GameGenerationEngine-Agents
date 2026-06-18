@@ -99,15 +99,32 @@ def _build_level(cfg: dict) -> dict:
         # so it reads as IMPOSING — a dragon, a giant, a monster. Without
         # this, a "dragon" rendered at OBSTACLE_W=80 looks like a small
         # flying imp, not the threat the escape narrative implies.
+        # Player spawns at x=80. The pursuer's RIGHT edge must sit far
+        # enough behind that spawn point that the player can't start
+        # inside the pursuer's hitbox on frame 1 (which produces an
+        # immediate Game Over before the player has even moved).
+        #
+        # The math is sensitive to the pursuer's scale: a 1.5× pursuer
+        # is 120 px wide and its hitbox extends further right than a
+        # 1× pursuer would. So we compute the start position from the
+        # scale, not as a hard-coded constant.
+        PURSUER_SCALE   = 1.5
+        PLAYER_SPAWN_X  = 80
+        SAFETY_GAP_PX   = 200    # gap between pursuer's right edge and player
+        BASE_OBSTACLE_W = 80     # OBSTACLE_W in platform_game.html.template
+        pursuer_visual_w = BASE_OBSTACLE_W * PURSUER_SCALE
+        pursuer_start_x  = PLAYER_SPAWN_X - SAFETY_GAP_PX - pursuer_visual_w
+        # = 80 - 200 - 120 = -240 (off-screen left, by design)
+
         pursuer_speed = round(espeed * 1.5 + rng.uniform(-0.2, 0.2), 1)
         pursuer = {
-            "x":  20,            # player spawns at x=80; pursuer is just behind
+            "x":  pursuer_start_x,
             "y":  GROUND_Y,
             "patrol_range":       0,
             "speed":              pursuer_speed,
             "activation_delay_ms": 2200,   # ~2.2 second head start
             "motion":             "ground",
-            "scale":              1.5,     # 1.5× width and height
+            "scale":              PURSUER_SCALE,
         }
         enemies.append(pursuer)
     else:
