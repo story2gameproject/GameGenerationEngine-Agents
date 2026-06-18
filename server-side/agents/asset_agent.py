@@ -223,11 +223,13 @@ def _sprite_prompt(description: str, role: str) -> str:
         )
     if role == "obstacle":
         # Extra-aggressive single-instance + anti-lineup language. SDXL
-        # has a strong training bias to draw vehicles in pairs/rows/showcase
-        # compositions, so we hammer "exactly 1" three different ways and
-        # explicitly forbid second instances. "macro framing" replaces
-        # "portrait" so the landscape canvas doesn't get a vertical
-        # composition.
+        # has a strong training bias to draw vehicles in pairs/rows/
+        # showcase compositions, so we hammer "exactly 1" three different
+        # ways and explicitly forbid second instances. Also explicitly
+        # forbid environmental decoration ("no grass, no ground, no
+        # surrounding scene") because for inanimate obstacles (rocks,
+        # logs, crystals) SDXL likes to add grass tufts, dirt patches,
+        # or platforms underneath that survive background removal.
         return (
             f"exactly 1 (one) solitary {single}, ONLY ONE {single} in the entire frame, "
             f"a single large close-up illustration of one isolated {single}, "
@@ -235,6 +237,9 @@ def _sprite_prompt(description: str, role: str) -> str:
             f"video game obstacle, macro framing, "
             f"absolutely no second {single} anywhere in the image, "
             f"no other {single}s visible, "
+            f"the {single} is shown ALONE with no environment around it, "
+            f"no grass, no dirt patch, no platform, no ground beneath it, "
+            f"no surrounding scenery, just the subject, "
             f"{_STYLE_ANCHOR}"
         )
     if role == "target_rescue":
@@ -333,6 +338,70 @@ def _sdxl_sprite_image(description: str, role: str):
             else:
                 raise
     raise last_exc if last_exc else RuntimeError("SDXL failed after 3 attempts")
+
+
+def _detect_facing_from_image(pil_image) -> str:
+    """Heuristic facing detection by direct pixel analysis. Returns
+    'right', 'left', or 'unclear'.
+
+    Claude Vision's facing verdict is reliable on clean side-profile
+    sprites but fails on 3/4 views, head-vs-body mismatches, and
+    occasionally hallucinates the wrong direction. This function gives
+    us a SECOND independent signal: in the TOP 30 % of the sprite
+    (head region), find the dark "face feature" pixels (eyes, nose,
+    mouth, hair, helmet visor) and compute their horizontal centroid.
+    For a side-profile character those features cluster on the face
+    side of the silhouette — left centroid means face is on the left
+    means character faces left; right centroid means faces right;
+    centred means front/back or unclear.
+
+    The two signals are combined in _ai_one_sprite: when the heuristic
+    detects a clear direction, we trust it over Claude's verdict
+    (which is the one that misclassifies under stress).
+    """
+    import numpy as np
+    arr = np.array(pil_image.convert("RGBA"))
+    h, w = arr.shape[:2]
+    if h < 20 or w < 20:
+        return "unclear"
+
+    # Top 30 % of the sprite = head region (sprite is bottom-anchored by
+    # the bbox crop earlier, so the head is at the top of the frame).
+    head_h = max(int(h * 0.3), 10)
+    head = arr[:head_h]
+
+    alpha = head[..., 3]
+    r, g, b = (head[..., 0].astype(float),
+               head[..., 1].astype(float),
+               head[..., 2].astype(float))
+    lum = 0.3 * r + 0.59 * g + 0.11 * b
+
+    # Feature mask: visibly opaque AND darker than skin tone.
+    # The threshold luminance 90 covers eyes/pupils, nostrils, mouth
+    # shadow, hair, helmet visors, beards — anything that's not the
+    # bright base colour of the subject.
+    feature_mask = (alpha > 100) & (lum < 90)
+
+    if feature_mask.sum() < 8:
+        # Too few dark pixels to reason about (e.g. all-light astronaut
+        # helmet without much shading inside).
+        return "unclear"
+
+    _ys, xs = np.where(feature_mask)
+    mean_x = float(xs.mean())
+    center_x = w / 2.0
+    # Normalised offset in [-1, +1]; positive = right of center.
+    offset_ratio = (mean_x - center_x) / (w / 2.0)
+
+    # 12 % off-center is enough to call it confidently. Tighter than
+    # this and clean side-profile sprites would be misclassified;
+    # looser and front-facing sprites slip into the wrong bucket.
+    THRESHOLD = 0.12
+    if offset_ratio > THRESHOLD:
+        return "right"
+    if offset_ratio < -THRESHOLD:
+        return "left"
+    return "unclear"
 
 
 # Background removal — we try in order:
@@ -592,6 +661,27 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> tuple[str, d
             continue
 
         verdict = image_vision.verify_sprite(transparent, description, role)
+
+        # Second, independent facing signal: pixel-level analysis of the
+        # head region. This catches cases Claude Vision gets wrong — 3/4
+        # views, head-vs-body mismatches, and the occasional outright
+        # hallucination ("looks like right" when the sprite is plainly
+        # facing left). When the heuristic detects a clear direction we
+        # trust it over Claude's verdict. When it's "unclear" we fall
+        # back to Claude.
+        heuristic_facing = _detect_facing_from_image(transparent)
+        if heuristic_facing in ("right", "left"):
+            if heuristic_facing != verdict["facing"]:
+                logger.info(
+                    "Sprite [%s] facing: heuristic says %s, Claude said %s — trusting heuristic",
+                    role, heuristic_facing, verdict["facing"],
+                )
+            verdict = {**verdict, "facing": heuristic_facing}
+        else:
+            logger.info(
+                "Sprite [%s] facing: heuristic unclear, sticking with Claude verdict (%s)",
+                role, verdict["facing"],
+            )
 
         # Auto-flip cheap fix: subject is facing the wrong way but otherwise
         # fine. Mirror the pixels so the cached file faces right.
