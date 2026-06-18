@@ -318,8 +318,14 @@ def finalize_structured_conversation(session_id: str) -> dict:
     user_states[session_id]["current_question"] = "complete"
     logger.info("Job %s: queued for session %s (user: %s)", job_id, session_id, user_name)
 
-    msg = (f"Generating your game{', ' + user_name if user_name else ''}… "
-           f"this can take a few minutes.")
+    # Address the user directly by name (vocative) — reads like a
+    # friendly chat ("Yael, generating your game…") rather than the
+    # earlier awkward "Generating your game, Yael…" pattern. Skip the
+    # name prefix when we don't have one yet.
+    if user_name:
+        msg = f"{user_name}, generating your game… this can take a few minutes."
+    else:
+        msg = "Generating your game… this can take a few minutes."
     return {
         "message": msg,
         "type":    "job_started",
@@ -397,11 +403,20 @@ def job_status(job_id: str):
 
     if snap["status"] == "done":
         resp["game_url"] = snap["game_url"]
-        resp["message"]  = f"Your game is ready{', ' + user_name if user_name else ''}! 🎮"
+        # Vocative form — "Yael, your game is ready!" sounds like a
+        # friendly direct address. Falls back to no-name form if we
+        # don't have it.
+        if user_name:
+            resp["message"] = f"{user_name}, your game is ready! 🎮"
+        else:
+            resp["message"] = "Your game is ready! 🎮"
     elif snap["status"] == "error":
         resp["error"]    = snap.get("error") or "unknown error"
-        resp["message"]  = (f"Sorry{', ' + user_name if user_name else ''}, "
-                            f"the game generation failed. Please try again.")
+        # "Sorry Yael, …" — informal apology that addresses the user.
+        if user_name:
+            resp["message"] = f"Sorry {user_name}, the game generation failed. Please try again."
+        else:
+            resp["message"] = "Sorry, the game generation failed. Please try again."
     # status == "working" → just {success, status}, client keeps polling
     return jsonify(resp), 200
 

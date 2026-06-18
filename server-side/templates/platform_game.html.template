@@ -855,7 +855,14 @@ function gameLoop() {
     drawEnemies();
     drawPlayer();
     drawHUD();
-    drawOverlay('YOU WIN! 🎮', WIN_MESSAGE + ', ' + PLAYER_NAME + '!', 'Play Again');
+    // Vocative form — name at the start, lowercase the first letter
+    // of WIN_MESSAGE so "Yael, you escaped!" reads naturally instead of
+    // "Yael, You escaped!" (double-capital). Falls back to plain
+    // WIN_MESSAGE when no player name is set.
+    const winSubtitle = PLAYER_NAME
+      ? PLAYER_NAME + ', ' + WIN_MESSAGE.charAt(0).toLowerCase() + WIN_MESSAGE.slice(1) + '!'
+      : WIN_MESSAGE + '!';
+    drawOverlay('YOU WIN! 🎮', winSubtitle, 'Play Again');
   }
 
   requestAnimationFrame(gameLoop);
