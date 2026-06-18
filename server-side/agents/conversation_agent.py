@@ -195,7 +195,8 @@ Return ONLY valid JSON (no markdown) with this exact structure:
     "description": "string",
     "primary_color": "#RRGGBB",
     "secondary_color": "#RRGGBB",
-    "accent_color": "#RRGGBB"
+    "accent_color": "#RRGGBB",
+    "size_scale": 1.0
   }},
   "world": {{
     "description": "string",
@@ -207,15 +208,33 @@ Return ONLY valid JSON (no markdown) with this exact structure:
   "goal_type": "collecting_goals|rescue_mission|time_trial|escape|obstacle_run",
   "target": {{
     "description": "string",
-    "color": "#RRGGBB"
+    "color": "#RRGGBB",
+    "size_scale": 1.0
   }},
   "obstacles": {{
     "description": "string",
     "primary_color": "#RRGGBB",
     "secondary_color": "#RRGGBB",
-    "motion_type": "ground|flying|stationary"
+    "motion_type": "ground|flying|stationary",
+    "size_scale": 1.0
   }}
 }}
+
+The "size_scale" field is the subject's size relative to an average human adult, who is 1.0. It controls how big each character renders on screen and how big their collision hitbox is. Examples:
+
+- adult human, knight, princess, person ........ 1.0
+- child, teenager ................................ 0.85
+- small dog, cat, fox, rabbit, raccoon ........... 0.6
+- mouse, frog, bird, butterfly, coin, gem ........ 0.4
+- large dog, wolf, panda, sheep .................. 0.9
+- big bear, lion, gorilla, elephant ............... 1.6
+- dragon, giant, troll, ogre, T-rex ............... 2.2
+- huge boss creature, mecha, godzilla ............ 3.0
+- car, taxi, motorbike, scooter .................. 1.4
+- truck, bus ..................................... 2.0
+- tank, large machine ............................. 2.5
+
+Pick the closest match. If hero is "a brown dog with a red collar", size_scale=0.6. If obstacle is "a red fire-breathing dragon", size_scale=2.2. If hero is "a brave knight", size_scale=1.0. If hero AND obstacle are both animals of similar real-world size (e.g. dog vs cat), keep them in proportion — a dog is larger than a cat so dog=0.6 and cat=0.5. Get the relative scale right so the game world feels plausible.
 
 Choose colors that visually match the descriptions. If the hero is a known character (e.g. Superman, Mario, Batman), use that character's canonical color palette. For locations, infer the atmosphere (NYC → urban dark blue/grey, Mars → orange/red, etc.). All colors must be valid hex codes.
 

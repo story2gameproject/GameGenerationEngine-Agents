@@ -101,22 +101,25 @@ def _build_level(cfg: dict) -> dict:
         # flying imp, not the threat the escape narrative implies.
         # Player spawns at x=80. The pursuer's RIGHT edge must sit far
         # enough behind that spawn point that the player can't start
-        # inside the pursuer's hitbox on frame 1 (which produces an
-        # immediate Game Over before the player has even moved).
+        # inside the pursuer's hitbox on frame 1.
         #
-        # The math is sensitive to the pursuer's scale: a 1.5× pursuer
-        # is 120 px wide and its hitbox extends further right than a
-        # 1× pursuer would. So we compute the start position from the
-        # scale, not as a hard-coded constant.
-        PURSUER_SCALE   = 1.5
-        PLAYER_SPAWN_X  = 80
-        SAFETY_GAP_PX   = 200    # gap between pursuer's right edge and player
-        BASE_OBSTACLE_W = 80     # OBSTACLE_W in platform_game.html.template
-        pursuer_visual_w = BASE_OBSTACLE_W * PURSUER_SCALE
+        # The pursuer's visual width depends on the OBSTACLE_SIZE_SCALE
+        # from the Conversation Agent's analysis (a dragon is 2.2x, a
+        # taxi is 1.4x, etc.), so spawn offset must derive from that
+        # scale, not a hard-coded 1.5.
+        PLAYER_SPAWN_X   = 80
+        SAFETY_GAP_PX    = 200    # gap between pursuer's right edge and player
+        BASE_OBSTACLE_W  = 80     # OBSTACLE_W in platform_game.html.template
+        pursuer_visual_w = BASE_OBSTACLE_W * cfg["obstacle_scale"]
         pursuer_start_x  = PLAYER_SPAWN_X - SAFETY_GAP_PX - pursuer_visual_w
-        # = 80 - 200 - 120 = -240 (off-screen left, by design)
 
-        pursuer_speed = round(espeed * 1.5 + rng.uniform(-0.2, 0.2), 1)
+        # Pursuer speed close to PLAYER_SPEED (=6 in the template). The
+        # previous formula `espeed * 1.5` produced ~3.0, which is half
+        # the player's speed — the chase was trivially escapable. At 5.5
+        # the dragon nearly matches the player; the player MUST keep
+        # moving forward to survive, and any jump/pause lets the dragon
+        # close the gap.
+        pursuer_speed = round(5.5 + rng.uniform(-0.3, 0.3), 1)
         pursuer = {
             "x":  pursuer_start_x,
             "y":  GROUND_Y,
@@ -124,8 +127,10 @@ def _build_level(cfg: dict) -> dict:
             "speed":              pursuer_speed,
             "activation_delay_ms": 2200,   # ~2.2 second head start
             "motion":             "ground",
-            "scale":              PURSUER_SCALE,
         }
+        # Note: visual + hitbox scaling for the pursuer is now driven by
+        # the global OBSTACLE_SIZE_SCALE in the template (no per-enemy
+        # scale field needed).
         enemies.append(pursuer)
     else:
         # ── Normal modes: spread enemies across the level ─────────────────
@@ -211,19 +216,26 @@ def generate_level(game_params: dict) -> dict:
     # and chasing rightward.
     motion_type = game_params.get("obstacles", {}).get("motion_type", "ground")
     goal_type   = (game_params.get("goal_type") or "").lower().replace(" ", "_")
+    # Per-character size scales come from the Conversation Agent's analysis
+    # of the descriptions (a dragon is bigger than a dog, etc.). The level
+    # agent needs the obstacle scale to position the escape pursuer correctly
+    # — its starting offset depends on how wide the visual is.
+    obstacle_scale = float(game_params.get("obstacles", {}).get("size_scale", 1.0))
 
     try:
         cfg = _claude_difficulty(game_params)
-        cfg["seed_key"]    = seed_key
-        cfg["motion_type"] = motion_type
-        cfg["goal_type"]   = goal_type
+        cfg["seed_key"]       = seed_key
+        cfg["motion_type"]    = motion_type
+        cfg["goal_type"]      = goal_type
+        cfg["obstacle_scale"] = obstacle_scale
         return _build_level(cfg)
     except Exception as exc:
         logger.warning("Level agent Claude call failed (%s) — using medium preset", exc)
         preset = dict(_PRESETS["medium"])
-        preset["seed_key"]    = seed_key
-        preset["motion_type"] = motion_type
-        preset["goal_type"]   = goal_type
+        preset["seed_key"]       = seed_key
+        preset["motion_type"]    = motion_type
+        preset["goal_type"]      = goal_type
+        preset["obstacle_scale"] = obstacle_scale
         return _build_level(preset)
 
 

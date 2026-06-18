@@ -128,6 +128,15 @@ def inject_into_template(game_params: dict, assets: dict, level_data: dict, bg_u
 
     tmpl = string.Template(raw)
 
+    # Per-character size scales. Conversation Agent estimated each
+    # subject's size relative to a human adult (1.0). Dragon ~ 2.2,
+    # small dog ~ 0.6, taxi ~ 1.4, etc. The template uses these to
+    # render visuals (and scale hitboxes for non-player characters) so
+    # a dragon is visually imposing and a kitten is appropriately tiny.
+    hero_scale     = float(game_params.get("hero", {}).get("size_scale", 1.0))
+    obstacle_scale = float(game_params.get("obstacles", {}).get("size_scale", 1.0))
+    target_scale   = float(game_params.get("target", {}).get("size_scale", 1.0))
+
     return tmpl.substitute(
         GAME_TITLE           = _js(game_params.get("game_title", "My Game")),
         PLAYER_NAME          = _js(game_params.get("player_name", "Player")),
@@ -144,6 +153,10 @@ def inject_into_template(game_params: dict, assets: dict, level_data: dict, bg_u
         # without flipping. Default True for backward compatibility.
         HERO_DIRECTIONAL     = _js(bool(assets.get("hero_directional", True))),
         OBSTACLE_DIRECTIONAL = _js(bool(assets.get("obstacle_directional", True))),
+        # Size scales — applied per-character in the template.
+        HERO_SIZE_SCALE      = hero_scale,
+        OBSTACLE_SIZE_SCALE  = obstacle_scale,
+        TARGET_SIZE_SCALE    = target_scale,
         SKY_COLOR            = _js(assets["sky_color"]),
         GROUND_COLOR         = _js(assets["ground_color"]),
         PLATFORM_COLOR       = _js(assets["platform_color"]),

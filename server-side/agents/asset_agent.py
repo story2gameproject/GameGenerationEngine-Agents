@@ -90,7 +90,10 @@ def _raw_target_desc(raw: dict, goal_type: str) -> str:
     if g == "rescue_mission":
         return (raw.get("rescue_mission_character") or "character to rescue").strip()
     if g == "escape":
-        return "exit gate"
+        # An exit door, not a character. SDXL renders this as a wooden
+        # or stone doorway with golden/warm light spilling out — the
+        # "freedom" the player is running toward.
+        return "wooden exit door with bright golden light shining through the open doorway"
     if g == "time_trial":
         return "finish line flag"
     if g == "obstacle_run":
@@ -671,7 +674,11 @@ def _ai_sprite_urls(game_params: dict) -> dict:
     """
     raw       = game_params.get("_raw_answers", {})
     goal_type = (game_params.get("goal_type") or "").lower().replace(" ", "_")
-    is_rescue = goal_type in ("rescue_mission", "escape")
+    # Only "rescue_mission" uses a character at the goal point.
+    # "escape" used to share this path but it produced human-shaped exit
+    # signs; now escape goes through the target_item branch where the
+    # target description is an actual door with light coming through.
+    is_rescue = goal_type == "rescue_mission"
 
     hero_desc     = _raw_hero_desc(raw)
     obstacle_desc = _raw_obstacle_desc(raw)
@@ -740,7 +747,11 @@ def _library_sprite_urls(game_params: dict) -> dict:
     so the orchestrator doesn't need to special-case the fallback path.
     """
     goal_type = (game_params.get("goal_type") or "").lower().replace(" ", "_")
-    is_rescue = goal_type in ("rescue_mission", "escape")
+    # Only "rescue_mission" uses a character at the goal point.
+    # "escape" used to share this path but it produced human-shaped exit
+    # signs; now escape goes through the target_item branch where the
+    # target description is an actual door with light coming through.
+    is_rescue = goal_type == "rescue_mission"
     target_svg = _DEFAULT_RESCUE_TARGET_SVG if is_rescue else _DEFAULT_TARGET_SVG
     return {
         "hero_image_url":       _svg_string_to_url(_DEFAULT_HERO_SVG,     "library-hero",     "hero"),

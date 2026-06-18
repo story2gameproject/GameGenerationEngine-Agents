@@ -34,6 +34,12 @@ const OBSTACLE_IMG_URL   = $OBSTACLE_IMG_URL;
 // sprites we never flip — flipping a front-on hero looks wrong.
 const HERO_DIRECTIONAL     = $HERO_DIRECTIONAL;
 const OBSTACLE_DIRECTIONAL = $OBSTACLE_DIRECTIONAL;
+// Per-character size scales (1.0 = default human-sized). A dragon
+// obstacle might be 2.2, a small-dog hero 0.6, etc. Applied to both
+// visual and hitbox so collision matches what the player sees.
+const HERO_SIZE_SCALE     = $HERO_SIZE_SCALE;
+const OBSTACLE_SIZE_SCALE = $OBSTACLE_SIZE_SCALE;
+const TARGET_SIZE_SCALE   = $TARGET_SIZE_SCALE;
 const TARGET_IMG_URL     = $TARGET_IMG_URL;
 const SKY_COLOR          = $SKY_COLOR;
 const GROUND_COLOR       = $GROUND_COLOR;
@@ -388,11 +394,15 @@ function drawCollectibles() {
   level.collectibles.forEach(c => {
     if (c.collected) return;
     const sx = c.x - cameraX;
-    if (sx + TARGET_SMALL_W < 0 || sx > W) return;
+    // Apply target size scale — coins/gems stay small, larger targets
+    // (e.g. a big exit door for escape) render appropriately bigger.
+    const tw = TARGET_SMALL_W * TARGET_SIZE_SCALE;
+    const th = TARGET_SMALL_H * TARGET_SIZE_SCALE;
+    if (sx + tw < 0 || sx > W) return;
     // Glow effect
     ctx.shadowColor = '#FFD700';
     ctx.shadowBlur  = 8;
-    drawSpriteImage(SPRITES.target, sx, c.y, TARGET_SMALL_W, TARGET_SMALL_H, false);
+    drawSpriteImage(SPRITES.target, sx, c.y, tw, th, false);
     ctx.shadowBlur = 0;
   });
 }
@@ -414,9 +424,11 @@ function drawGoal() {
     ctx.font = '10px Courier New';
     ctx.fillText(GOAL_LABEL, sx, g.y - 16);
   } else {
-    // Draw the target character/object BIG at the goal
-    const charW = TARGET_LARGE_W;
-    const charH = TARGET_LARGE_H;
+    // Draw the target character/object BIG at the goal — scaled by
+    // TARGET_SIZE_SCALE (a princess is 1.0, a giant rescue character 2.0,
+    // an exit door 1.4, etc.)
+    const charW = TARGET_LARGE_W * TARGET_SIZE_SCALE;
+    const charH = TARGET_LARGE_H * TARGET_SIZE_SCALE;
     const charX = sx - charW / 2 + g.w / 2;   // centre on goal x
     const charY = g.y - charH;                 // sit on the ground
 
@@ -513,10 +525,11 @@ function updateEnemies() {
 
 function drawEnemies() {
   level.enemies.forEach(e => {
-    // Per-enemy scale (defaults to 1). Used by escape-mode pursuers to
-    // render 1.5× normal size so a dragon/giant/monster reads as
-    // imposing instead of like a regular ground guard.
-    const scale = e.scale || 1;
+    // Combined scale: global OBSTACLE_SIZE_SCALE from the Conversation
+    // Agent (e.g., dragon 2.2x, cat 0.5x) × any per-enemy multiplier
+    // (e.scale, defaults to 1). This way we get correct relative size
+    // across the game world without per-enemy overrides for the common case.
+    const scale = OBSTACLE_SIZE_SCALE * (e.scale || 1);
     const ew = OBSTACLE_W * scale;
     const eh = OBSTACLE_H * scale;
     const sx = e.x - cameraX;
@@ -609,10 +622,10 @@ function checkCollisions() {
   const ENEMY_HIT_H_RATIO = 0.80;
 
   level.enemies.forEach(e => {
-    // Per-enemy scale (defaults to 1) — used by escape-mode pursuers.
-    // The hitbox scales with the visual so a bigger dragon actually has
-    // a bigger collision area, matching what the player sees.
-    const scale = e.scale || 1;
+    // Same scale formula as drawEnemies — hitbox stays in sync with the
+    // visual so a 2.2x dragon catches the player at the visual edge of
+    // its sprite, not at the old 1x distance.
+    const scale = OBSTACLE_SIZE_SCALE * (e.scale || 1);
     const eVisW = OBSTACLE_W * scale;
     const eVisH = OBSTACLE_H * scale;
     const ehitW = eVisW * ENEMY_HIT_W_RATIO;
@@ -757,14 +770,19 @@ let playerFacing = 1; // 1 = right, -1 = left
 function drawPlayer() {
   if (player.vx < 0) playerFacing = -1;
   else if (player.vx > 0) playerFacing = 1;
-  // Visual is slightly bigger than hitbox — centre horizontally, anchor feet
-  const visX = (player.x - cameraX) - (HERO_W - player.w) / 2;
-  const visY = player.y - (HERO_H - player.h);
+  // Visual is scaled by HERO_SIZE_SCALE (1.0=human, 0.6=small dog,
+  // 2.2=dragon, etc. — set by the Conversation Agent per-game).
+  // Hitbox stays at player.w × player.h so physics (jump arc, ground
+  // collision) stays consistent across hero subjects.
+  const visW = HERO_W * HERO_SIZE_SCALE;
+  const visH = HERO_H * HERO_SIZE_SCALE;
+  const visX = (player.x - cameraX) - (visW - player.w) / 2;
+  const visY = player.y - (visH - player.h);
   // Only flip the hero on left-walk if the sprite is in side profile.
   // For forward/back-facing heroes (SDXL fallback when profile retries
   // exhaust), flipping would visibly look wrong; render static instead.
   const flip = HERO_DIRECTIONAL && playerFacing < 0;
-  drawSpriteImage(SPRITES.hero, visX, visY, HERO_W, HERO_H, flip);
+  drawSpriteImage(SPRITES.hero, visX, visY, visW, visH, flip);
 }
 
 // ── Main loop ────────────────────────────────────────────────

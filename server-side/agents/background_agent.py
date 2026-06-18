@@ -29,9 +29,14 @@ _STYLE = (
     "vibrant cinematic atmosphere, detailed environment, "
     "no characters, no people, no text, no watermark"
 )
+# Negative prompt — explicitly block "street" because the previous prompt
+# included "empty street view" which biased every location toward urban
+# streets even when the user described a dungeon, forest, or castle.
 _NEGATIVE = (
     "people, person, characters, faces, hands, text, watermark, signature, "
-    "logo, blurry, low quality, 3d render, photograph, ugly"
+    "logo, blurry, low quality, 3d render, photograph, ugly, "
+    "city street unless requested, empty road unless requested, "
+    "wrong location, generic landscape"
 )
 
 
@@ -93,13 +98,24 @@ def _hf_generate(game_params: dict):
     world_desc = game_params.get("world", {}).get("description", "outdoor scene")
     goal_type  = game_params.get("goal_type", "")
 
-    prompt = f"{_STYLE}, location: {world_desc}, empty street view with no characters"
+    # Repeat the user's location description multiple times in the prompt
+    # so SDXL really listens. "Empty street view" was removed because it
+    # biased every background toward urban scenes regardless of what the
+    # user described (a "dark dungeon" was coming back as a vaguely lit
+    # alley with columns).
+    prompt = (
+        f"{_STYLE}, "
+        f"the scene clearly depicts {world_desc}, "
+        f"location is {world_desc}, "
+        f"setting: {world_desc}, "
+        f"no characters, no people in the scene"
+    )
     if "rescue" in goal_type:
-        prompt += ", dramatic mood, dusk lighting"
+        prompt += ", dramatic mood, dusk lighting, atmospheric"
     elif "escape" in goal_type:
-        prompt += ", tense atmosphere, dark mood"
+        prompt += ", tense atmosphere, very dark mood, deep shadows, ominous"
     else:
-        prompt += ", bright cheerful lighting"
+        prompt += ", bright cheerful lighting, friendly atmosphere"
 
     logger.info("Background agent calling SDXL: '%s'", prompt[:120])
 
