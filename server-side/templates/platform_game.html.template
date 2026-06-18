@@ -481,17 +481,22 @@ function updateEnemies() {
     if (isEscape) {
       // ─── Escape mode: ONE persistent pursuer, delayed start ────────────
       // The pursuer holds position for `activation_delay_ms` (set by the
-      // level agent) so the player gets a head start. After that it chases
-      // rightward forever. If it catches the player → game over via the
-      // collision check elsewhere.
+      // level agent) so the player gets a head start. After that it
+      // TRUE-CHASES the player — it always moves toward the player's
+      // current position, in either direction. (Previously the pursuer
+      // moved only rightward; if the player jumped over and doubled
+      // back, the pursuer kept going off-screen instead of turning
+      // around to chase. Now it follows the player anywhere on the
+      // level.)
       const elapsed = Date.now() - gameStartTime;
       if (elapsed < (e.activation_delay_ms || 2000)) {
         // Still in the grace period — pursuer waits in place
         return;
       }
       e.activated = true;
-      e.dir = 1;
-      e.x += e.speed;
+      const dx = player.x - e.x;
+      e.dir = dx >= 0 ? 1 : -1;
+      e.x += e.dir * e.speed;
     } else {
       // ─── Default mode: encounter-based chase ───────────────────────────
       // First time the player gets within CHASE_RANGE, the enemy LOCKS IN a
@@ -534,10 +539,14 @@ function drawEnemies() {
     const eh = OBSTACLE_H * scale;
     const sx = e.x - cameraX;
     if (sx + ew < 0 || sx > W) return;
-    // Enemy walks left = mirror sprite — but only if the obstacle sprite
-    // is actually in side profile. For forward/back/unclear sprites we
-    // never flip; flipping a front-on guard looks wrong.
-    const flip = OBSTACLE_DIRECTIONAL && e.dir > 0;
+    // Cached AI sprites face RIGHT by default (the verifier auto-flips
+    // left-facing outputs before saving). So we mirror the sprite when
+    // the enemy is moving LEFT, not right. Previous code had this
+    // inverted, which made every moving enemy face the OPPOSITE
+    // direction of its motion (e.g. dragon walking right but staring
+    // left). For non-directional sprites (front/back/unclear) we never
+    // flip — flipping a front-on guard looks weird.
+    const flip = OBSTACLE_DIRECTIONAL && e.dir < 0;
     drawSpriteImage(SPRITES.obstacle, sx, e.y - eh, ew, eh, flip);
   });
 }

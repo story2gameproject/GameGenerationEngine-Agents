@@ -125,7 +125,7 @@ def _build_level(cfg: dict) -> dict:
             "y":  GROUND_Y,
             "patrol_range":       0,
             "speed":              pursuer_speed,
-            "activation_delay_ms": 2200,   # ~2.2 second head start
+            "activation_delay_ms": 1200,   # ~1.2 second head start (was 2.2s — gap felt too big)
             "motion":             "ground",
         }
         # Note: visual + hitbox scaling for the pursuer is now driven by
