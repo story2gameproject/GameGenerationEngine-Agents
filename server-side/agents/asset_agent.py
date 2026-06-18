@@ -632,9 +632,26 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> tuple[str, d
 
         if verdict["is_acceptable"]:
             logger.info("Sprite [%s] accepted on attempt %d/%d", role, attempt, MAX_TRIES)
+            # For OBSTACLES we always flag directional=True, even when the
+            # verifier returned "unclear" / "forward". Obstacles like
+            # dragons often get "unclear" verdicts because their head and
+            # body don't agree (a dragon breathing fire turns its head
+            # forward while the body stays in profile). The strict rule
+            # we use for heroes — render static when in doubt — looks
+            # weird on obstacles that ACTIVELY MOVE in both directions:
+            # the dragon would face one fixed way while chasing the
+            # player back and forth. Better to trust the SDXL prompt
+            # (which asks for right-facing) and let the game mirror on
+            # left-walk. Worst case the sprite happens to face left
+            # under the hood; common case it faces right and flipping
+            # works correctly.
+            if role == "obstacle":
+                is_directional = True
+            else:
+                is_directional = verdict["facing"] in ("right", "left")
             metadata = {
                 "facing":      verdict["facing"],
-                "directional": verdict["facing"] in ("right", "left"),
+                "directional": is_directional,
             }
             url = asset_cache.save(cache_desc, asset_type, transparent, metadata)
             return url, metadata
@@ -649,7 +666,12 @@ def _ai_one_sprite(description: str, asset_type: str, role: str) -> tuple[str, d
     # WRONG-facing.
     if last_image is not None:
         last_facing = (last_verdict or {}).get("facing", "unclear")
-        directional = last_facing in ("right", "left")
+        # Same rule as the accepted-path above: obstacles always directional,
+        # everything else respects the verifier's "right"/"left" verdict.
+        if role == "obstacle":
+            directional = True
+        else:
+            directional = last_facing in ("right", "left")
         logger.warning(
             "Sprite [%s] using best-effort last attempt "
             "(facing=%s, directional=%s, issues=%s)",
