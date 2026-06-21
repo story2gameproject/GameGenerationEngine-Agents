@@ -480,6 +480,31 @@ def _remove_bg_local(pil_image):
         return out
     cropped = out.crop(bbox)
     logger.info("Sprite cropped %s → %s", out.size, cropped.size)
+
+    # Step 4: sanity check — warn loudly when the cropped sprite is so
+    # small or sparse that it'll be effectively invisible in the game.
+    # This happens when rembg over-removes (small/thin subjects like
+    # crabs sometimes get cut almost entirely) or when SDXL produces a
+    # mostly-empty composition. We log a clear warning so it's spottable
+    # in the HF logs — actual recovery would need an extra retry loop
+    # in the caller; for now we surface the problem.
+    cw, ch = cropped.size
+    if cw < 30 or ch < 30:
+        logger.warning(
+            "Sprite cropped to suspiciously small size %dx%d — "
+            "likely rembg over-removal or near-empty SDXL output",
+            cw, ch,
+        )
+    elif cw * ch > 0:
+        opaque_pixels = int((np.array(cropped)[..., 3] > 0).sum())
+        density = opaque_pixels / (cw * ch)
+        if density < 0.05:
+            logger.warning(
+                "Sprite has very low opacity density %.1f%% (%d opaque "
+                "pixels in %dx%d frame) — may appear invisible in game",
+                density * 100, opaque_pixels, cw, ch,
+            )
+
     return cropped
 
 

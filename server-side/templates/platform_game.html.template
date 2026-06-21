@@ -213,9 +213,19 @@ function loadSpriteImage(name, url) {
 
 function drawSpriteImage(img, x, y, w, h, flipped) {
   if (!img) {
-    // Sprite hasn't loaded yet (rare) — draw a placeholder rectangle
-    ctx.fillStyle = '#888';
+    // Sprite asset failed to load (asset URL 404, empty PNG, or rembg
+    // over-removed). Draw a bright magenta box with a "?" so it's
+    // OBVIOUSLY a missing sprite to the user — not a confusing gray
+    // rectangle they might mistake for an intentional silhouette.
+    ctx.fillStyle = '#FF00C8';
     ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold ' + Math.floor(h * 0.5) + 'px Courier New';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', x + w / 2, y + h / 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     return;
   }
   if (flipped) {
@@ -704,9 +714,24 @@ function drawHUD() {
   ctx.fillText(goalText, goalX, 22);
 
   // Middle/left of the goal text: player name + score (when applicable)
+  // and time trial stopwatch (when applicable).
   let statusText = PLAYER_NAME;
   if (COLLECTIBLES_NEEDED > 0) {
     statusText += '  |  Score: ' + score;
+  }
+  // Time Trial mode: display a count-up stopwatch in mm:ss format.
+  // Previously the HUD was identical for every goal type which meant
+  // Time Trial games had no visible timer — defeating the whole point
+  // of the mode. We start counting from game-load time and just keep
+  // ticking; the count freezes on the win/lose overlay since drawHUD
+  // stops being called from those states.
+  if (GOAL_TYPE === 'time_trial') {
+    const elapsedMs  = Date.now() - gameStartTime;
+    const totalSec   = Math.max(0, Math.floor(elapsedMs / 1000));
+    const minutes    = Math.floor(totalSec / 60);
+    const seconds    = totalSec % 60;
+    const pad        = (n) => (n < 10 ? '0' + n : '' + n);
+    statusText += '  |  ⏱ ' + pad(minutes) + ':' + pad(seconds);
   }
   statusText += '  |  ';
   const statusWidth = ctx.measureText(statusText).width;
