@@ -450,11 +450,28 @@ def _remove_bg_local(pil_image):
     # denser halo than 30 and obstacles were still floating.)
     arr = np.array(out)
     if arr.ndim == 3 and arr.shape[-1] == 4:
-        weak = arr[..., 3] < 50
-        weak_count = int(weak.sum())
-        arr[..., 3][weak] = 0
+        # BINARIZE the alpha channel: every pixel becomes either fully
+        # transparent (alpha < 50 → 0) or fully opaque (alpha >= 50 → 255).
+        #
+        # Without binarization, rembg preserves the partial-alpha edges
+        # (50-200 range) it produces around biologically-translucent
+        # subjects like jellyfish, water/puddles, and thin-edged subjects
+        # like crabs. Those partial-alpha pixels render as ghostly /
+        # see-through in the game — a real bug Inbal hit on the time-
+        # trial scenarios (beach + crabs/jellyfish, park + puddles).
+        # Forcing every visible pixel to fully opaque eliminates the
+        # ghost effect; the bonus is harder edges that actually look
+        # MORE like pixel art.
+        opaque_mask = arr[..., 3] >= 50
+        weak_count  = int((~opaque_mask).sum() - (arr[..., 3] == 0).sum())
+        arr[..., 3][opaque_mask]  = 255
+        arr[..., 3][~opaque_mask] = 0
         if weak_count > 0:
-            logger.info("Alpha threshold: zeroed %d halo pixels", weak_count)
+            logger.info(
+                "Alpha binarization: zeroed %d sub-threshold pixels, "
+                "promoted the rest to fully opaque",
+                weak_count,
+            )
 
         # Step 2b: force ground anchor. Walk from the bottom up; trim any
         # row that has fewer than 3 opaque pixels (a stray dust trail rembg
