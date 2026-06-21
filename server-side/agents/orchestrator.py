@@ -133,9 +133,19 @@ def inject_into_template(game_params: dict, assets: dict, level_data: dict, bg_u
     # small dog ~ 0.6, taxi ~ 1.4, etc. The template uses these to
     # render visuals (and scale hitboxes for non-player characters) so
     # a dragon is visually imposing and a kitten is appropriately tiny.
-    hero_scale     = float(game_params.get("hero", {}).get("size_scale", 1.0))
-    obstacle_scale = float(game_params.get("obstacles", {}).get("size_scale", 1.0))
-    target_scale   = float(game_params.get("target", {}).get("size_scale", 1.0))
+    #
+    # Clamp to a usable range. Too small (< 0.5) and sprites become
+    # near-invisible dots (this happened to yellow ducks at 0.3 — they
+    # rendered at 15 px wide and the player couldn't see them). Too
+    # large (> 3.0) and they don't fit on screen.
+    def _clamp_scale(s, lo=0.5, hi=3.0):
+        try:
+            return max(lo, min(float(s), hi))
+        except (TypeError, ValueError):
+            return 1.0
+    hero_scale     = _clamp_scale(game_params.get("hero",      {}).get("size_scale", 1.0))
+    obstacle_scale = _clamp_scale(game_params.get("obstacles", {}).get("size_scale", 1.0))
+    target_scale   = _clamp_scale(game_params.get("target",    {}).get("size_scale", 1.0))
 
     return tmpl.substitute(
         GAME_TITLE           = _js(game_params.get("game_title", "My Game")),
